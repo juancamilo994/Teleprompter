@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:,">
+  <title>Teleprompter</title>
+  <script src="database.js"
+          onerror="window.__DB_FAILED=true"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      background-color: #F5F5F7;
+      color: #1A1A2E;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 40px;
+      background-color: #1A1A2E;
+    }
+    header img {
+      height: 40px;
+      width: auto;
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #FFFFFF;
+      line-height: 1.2;
+    }
+    header #actionBar {
+      display: flex;
+      gap: 8px;
+      margin-left: auto;
+    }
+    header #actionBar button {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-family: inherit;
+      font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.2);
+      background-color: transparent;
+      color: #FFFFFF;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    header #actionBar button#copyBtn {
+      font-weight: 600;
+      border: none;
+      background-color: #2563EB;
+      color: #FFFFFF;
+      min-width: 116px;
+    }
+    header #actionBar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Dual-screen layout */
+    #dualContainer {
+      display: flex;
+      gap: 24px;
+      padding: 32px 40px;
+      max-width: 1280px;
+      margin: 0 auto;
+      align-items: flex-start;
+    }
+
+    /* Card container (left) */
+    #teleprompter {
+      width: 560px;
+      flex-shrink: 0;
+      padding: 32px 40px;
+      background-color: #FFFFFF;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    /* Sections */
+    fieldset.section {
+      border: none;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding-bottom: 28px;
+      min-width: 0;
+    }
+    fieldset.section:last-of-type {
+      padding-bottom: 0;
+    }
+    fieldset.section legend {
+      font-size: 11px;
+      font-weight: 600;
+      color: #6B6B80;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #E5E5EA;
+      width: 100%;
+    }
+    fieldset.section > *:nth-child(2) {
+      margin-top: 12px;
+    }
+
+    /* Rows */
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .row > label,
+    .row > .label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1A1A2E;
+      width: 140px;
+      flex-shrink: 0;
+    }
+
+    /* Inputs */
+    input[type="text"],
+    input[type="number"],
+    select {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      border: 1px solid #E5E5EA;
+      border-radius: 6px;
+      background-color: #FFFFFF;
+      color: #1A1A2E;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus {
+      border-color: #2563EB;
+    }
+
+    /* Segmented button group (task) */
+    #taskGroup {
+      display: flex;
+      flex: 1;
+      gap: 0;
+    }
+    #taskGroup button {
+      flex: 1;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-family: inherit;
+      font-weight: 500;
+      border: 1px solid #E5E5EA;
+      background-color: #FFFFFF;
+      color: #1A1A2E;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #taskGroup button:first-child {
+      border-radius: 6px 0 0 6px;
+    }
+    #taskGroup button:last-child {
+      border-radius: 0 6px 6px 0;
+    }
+    #taskGroup button + button {
+      border-left: none;
+    }
+    #taskGroup button.active {
+      border-color: #2563EB;
+      background-color: #2563EB;
+      color: #FFFFFF;
+    }
+
+    /* Switch (phased execution) */
+    input[type="checkbox"][role="switch"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      background-color: #E5E5EA;
+      position: relative;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      border: none;
+      flex-shrink: 0;
+    }
+    input[type="checkbox"][role="switch"]::before {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background-color: #FFFFFF;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    input[type="checkbox"][role="switch"]:checked {
+      background-color: #2563EB;
+    }
+    input[type="checkbox"][role="switch"]:checked::before {
+      transform: translateX(18px);
+    }
+
+    /* Nested blocks — audit options */
+    #auditOptions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      margin-left: 148px;
+      padding-left: 16px;
+      border-left: 2px solid #E5E5EA;
+    }
+    #auditOptions[hidden] { display: none; }
+    #auditOptions > .label {
+      width: auto;
+      font-size: 13px;
+      font-weight: 400;
+      color: #6B6B80;
+    }
+    #auditGroup {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #auditGroup > div {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Nested blocks — phase inputs */
+    #phaseInputs {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+      margin-left: 148px;
+      padding-left: 16px;
+      border-left: 2px solid #E5E5EA;
+    }
+    #phaseInputs[hidden] { display: none; }
+    #phaseInputs > .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #phaseInputs > .row > label {
+      font-size: 14px;
+      font-weight: 400;
+      color: #1A1A2E;
+      width: 110px;
+      flex-shrink: 0;
+    }
+    #phaseInputs > .row > input[type="number"] {
+      width: 80px;
+      flex: none;
+    }
+
+    /* Checkbox groups (docs, mcps) */
+    #docsGroup,
+    #mcpsGroup,
+    #skillsGroup {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #docsGroup > div,
+    #mcpsGroup > div,
+    #skillsGroup > div {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Checkbox styling */
+    input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #E5E5EA;
+      border-radius: 4px;
+      background-color: #FFFFFF;
+      cursor: pointer;
+      flex-shrink: 0;
+      position: relative;
+      transition: all 0.15s;
+    }
+    input[type="checkbox"]:checked {
+      border-color: #2563EB;
+      background-color: #2563EB;
+    }
+    input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 5px;
+      height: 9px;
+      border: solid #FFFFFF;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    input[type="checkbox"][role="switch"] {
+      width: 40px;
+      height: 22px;
+      border: none;
+      border-radius: 11px;
+      background-color: #E5E5EA;
+    }
+    input[type="checkbox"][role="switch"]::after {
+      content: none;
+    }
+    input[type="checkbox"][role="switch"]:checked {
+      background-color: #2563EB;
+    }
+
+    /* Labels in checkbox groups */
+    #docsGroup label,
+    #mcpsGroup label,
+    #skillsGroup label,
+    #auditGroup label {
+      font-size: 14px;
+      font-weight: 400;
+      color: #1A1A2E;
+      cursor: pointer;
+    }
+
+    /* Template import warning banner */
+    #templateWarning {
+      max-width: 1280px;
+      margin: 16px auto 0;
+      padding: 10px 16px;
+      font-size: 13px;
+      border-radius: 6px;
+      border: 1px solid #E5E5EA;
+      background-color: #FFFFFF;
+      color: #1A1A2E;
+    }
+    #templateWarning[hidden] { display: none; }
+    #templateWarning.error {
+      border-color: #DC2626;
+      background-color: #FEF2F2;
+      color: #991B1B;
+    }
+    #templateWarning.warn {
+      border-color: #D97706;
+      background-color: #FFFBEB;
+      color: #92400E;
+    }
+
+    /* Right panel */
+    #rightPanel {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+      min-height: 500px;
+      position: sticky;
+      top: 32px;
+      max-height: calc(100vh - 64px);
+      overflow-y: auto;
+    }
+
+    /* Prompt preview */
+    #promptPreview {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+      padding: 24px;
+      background-color: #FFFFFF;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+      min-height: 500px;
+    }
+    #promptPreview .preview-header {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #promptPreview .preview-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #6B6B80;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    #promptPreview .preview-divider {
+      height: 1px;
+      background-color: #E5E5EA;
+      width: 100%;
+    }
+    #promptOutput {
+      flex: 1;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+      color: #6B6B80;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      padding-top: 4px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    #promptOutput[hidden] { display: none; }
+
+    /* Debug toggle (inside right panel) */
+    #debugToggle {
+      text-align: left;
+    }
+    #debugToggle summary {
+      font-size: 13px;
+      color: #6B6B80;
+      cursor: pointer;
+      font-weight: 500;
+      user-select: none;
+    }
+    #debugToggle summary:focus {
+      outline: none;
+    }
+    #stateDump {
+      margin-top: 12px;
+      padding: 16px;
+      background-color: #FFFFFF;
+      border: 1px solid #E5E5EA;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+      color: #1A1A2E;
+      white-space: pre-wrap;
+      overflow-x: auto;
+      text-align: left;
+    }
+
+    /* Phase 6 — Copy feedback */
+    @keyframes tp-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+      50% { box-shadow: 0 0 0 3px rgb(156, 225, 255); }
+    }
+    #copyBtn.copied {
+      background-color: #16A34A;
+      animation: tp-glow 1.5s ease-in-out;
+    }
+
+    /* Phase 6 — Inline validation hint */
+    .hint {
+      margin-left: 122px;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #92400E;
+    }
+    .hint[hidden] { display: none; }
+
+    /* Phase 6 — Empty-state placeholder */
+    #emptyHint {
+      font-size: 13px;
+      color: #9CA3AF;
+      font-style: italic;
+    }
+    #emptyHint[hidden] { display: none; }
+
+    /* Phase 6 — Task label flash (null task on copy) */
+    @keyframes tp-flash {
+      0%, 100% { color: #6B6B80; }
+      50% { color: #DC2626; }
+    }
+    .flash {
+      animation: tp-flash 0.4s ease-in-out 2;
+    }
+
+    /* Phase 6 — Narrow viewport fallback */
+    @media (max-width: 720px) {
+      header {
+        flex-wrap: wrap;
+        padding: 16px 20px;
+        gap: 12px;
+      }
+      header #actionBar {
+        margin-left: 0;
+        flex-wrap: wrap;
+      }
+      #dualContainer {
+        flex-direction: column;
+        padding: 20px;
+        gap: 16px;
+      }
+      #teleprompter {
+        width: 100%;
+        padding: 20px;
+      }
+      .row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .row > label,
+      .row > .label {
+        width: auto;
+      }
+      #auditOptions,
+      #phaseInputs {
+        margin-left: 0;
+      }
+      #phaseInputs > .row > label {
+        width: auto;
+      }
+      #phaseInputs > .row > input[type="number"] {
+        width: 100%;
+      }
+      #rightPanel {
+        position: static;
+        max-height: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="LogoWhite.png" alt="Logo" onerror="this.style.display='none'" />
+    <h1>Teleprompter</h1>
+    <div id="actionBar">
+      <button type="button" id="importBtn">Import template</button>
+      <button type="button" id="exportBtn">Export template</button>
+      <button type="button" id="copyBtn">Copy prompt</button>
+    </div>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </header>
+
+  <p id="templateWarning" hidden></p>
+
+  <div id="dualContainer">
+  <form id="teleprompter" onsubmit="return false;">
+    <!-- Project -->
+    <fieldset class="section">
+      <legend>Project</legend>
+
+      <div class="row">
+        <label for="projectName">Project name</label>
+        <input type="text" id="projectName" name="projectName">
+      </div>
+
+      <div class="row">
+        <label for="projectDescription">Project description</label>
+        <input type="text" id="projectDescription" name="projectDescription">
+      </div>
+
+      <div class="row">
+        <label for="projectType">Project type</label>
+        <select id="projectType" name="projectType"></select>
+      </div>
+
+      <div class="row">
+        <label for="stack">Stack</label>
+        <select id="stack" name="stack"></select>
+      </div>
+    </fieldset>
+
+    <!-- Task -->
+    <fieldset class="section">
+      <legend id="taskLegend">Task</legend>
+
+      <div class="row">
+        <span class="label">Task</span>
+        <div id="taskGroup" role="group" aria-label="Task"></div>
+      </div>
+
+      <div class="row" id="auditOptions" hidden>
+        <span class="label">Audit types</span>
+        <div id="auditGroup" role="group" aria-label="Audit types"></div>
+      </div>
+    </fieldset>
+
+    <!-- Sprint -->
+    <fieldset class="section">
+      <legend>Sprint</legend>
+
+      <div class="row">
+        <label for="sprintObjective">Sprint objective</label>
+        <input type="text" id="sprintObjective" name="sprintObjective">
+      </div>
+
+      <div class="row">
+        <label for="phasedExecution">Phased execution</label>
+        <input type="checkbox" id="phasedExecution" name="phasedExecution" role="switch">
+      </div>
+
+      <div class="row" id="phaseInputs" hidden>
+        <div class="row">
+          <label for="totalPhases">Total phases</label>
+          <input type="number" id="totalPhases" name="totalPhases" min="1">
+        </div>
+
+        <div class="row">
+          <label for="currentPhase">Current phase</label>
+          <input type="number" id="currentPhase" name="currentPhase" min="1">
+        </div>
+
+        <div class="row">
+          <label for="phaseSpecPath">Phase spec path</label>
+          <input type="text" id="phaseSpecPath" name="phaseSpecPath" placeholder="docs/implementation-plan/phase-1-database.md">
+        </div>
+
+        <p class="hint" id="phaseHint" hidden></p>
+      </div>
+    </fieldset>
+
+    <!-- Documents -->
+    <fieldset class="section">
+      <legend>Documents</legend>
+      <div id="docsGroup" role="group" aria-label="Base documents"></div>
+    </fieldset>
+
+    <!-- External connections -->
+    <fieldset class="section">
+      <legend>External connections</legend>
+      <div id="mcpsGroup" role="group" aria-label="External connections"></div>
+    </fieldset>
+
+    <!-- Skills -->
+    <fieldset class="section">
+      <legend>Skills</legend>
+      <div id="skillsGroup" role="group" aria-label="Skills">
+        <div>
+          <input type="checkbox" id="caveman" name="caveman" checked>
+          <label for="caveman">Caveman skill</label>
+        </div>
+      </div>
+    </fieldset>
+  </form>
+
+  <div id="rightPanel">
+    <div id="promptPreview">
+      <div class="preview-header">
+        <span class="preview-label">Generated prompt</span>
+        <div class="preview-divider"></div>
+      </div>
+      <p id="emptyHint" hidden>Fill in the form to build your prompt.</p>
+      <pre id="promptOutput"></pre>
+    </div>
+    <details id="debugToggle">
+      <summary>Debug: state dump</summary>
+      <pre id="stateDump"></pre>
+    </details>
+  </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const form = document.getElementById("teleprompter");
+      const stateDump = document.getElementById("stateDump");
+      const taskGroup = document.getElementById("taskGroup");
+      const auditOptions = document.getElementById("auditOptions");
+      const auditGroup = document.getElementById("auditGroup");
+      const phaseInputs = document.getElementById("phaseInputs");
+      const docsGroup = document.getElementById("docsGroup");
+      const mcpsGroup = document.getElementById("mcpsGroup");
+
+      let selectedTask = null; // single-select toggle state
+
+      function populateSelect(select, options, defaultFirst) {
+        for (const opt of options) {
+          const el = document.createElement("option");
+          el.value = opt;
+          el.textContent = opt;
+          select.appendChild(el);
+        }
+        if (defaultFirst) select.value = options[0];
+      }
+
+      function buildTaskGroup() {
+        for (const key of Object.keys(DATABASE.tasks)) {
+          const meta = DATABASE.tasks[key];
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.dataset.task = key;
+          btn.textContent = meta.label;
+          btn.addEventListener("click", function () {
+            // Toggle: re-clicking the active task deselects it (back to null).
+            // selectTask itself stays an absolute setter so applyState/import
+            // can force a specific task without toggle semantics.
+            selectTask(selectedTask === key ? null : key);
+          });
+          taskGroup.appendChild(btn);
+        }
+      }
+
+      function selectTask(key) {
+        selectedTask = key;
+        for (const btn of taskGroup.querySelectorAll("button")) {
+          const active = btn.dataset.task === key;
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+          btn.classList.toggle("active", active);
+          btn.title = active ? "Click again to deselect" : "";
+        }
+        refreshVisibility();
+        render();
+      }
+
+      // Centralized conditional-visibility logic. Used by selectTask, the
+      // phasedExecution change handler, and applyState (template import).
+      // Reads current DOM/selectedTask directly so callers don't need to pass state.
+      function refreshVisibility() {
+        auditOptions.hidden = selectedTask !== "audit";
+        phaseInputs.hidden = !form.elements.phasedExecution.checked;
+      }
+
+      function buildAuditGroup() {
+        for (const key of Object.keys(DATABASE.auditTypes)) {
+          const meta = DATABASE.auditTypes[key];
+          const row = document.createElement("div");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.id = "audit-" + key;
+          cb.name = "audit";
+          cb.value = key;
+          const lbl = document.createElement("label");
+          lbl.htmlFor = cb.id;
+          lbl.textContent = meta.label;
+          row.appendChild(cb);
+          row.appendChild(lbl);
+          auditGroup.appendChild(row);
+        }
+      }
+
+      function buildDocsGroup() {
+        for (const doc of DATABASE.baseDocs) {
+          const row = document.createElement("div");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.id = doc.id;
+          cb.name = doc.id;
+          const lbl = document.createElement("label");
+          lbl.htmlFor = cb.id;
+          lbl.textContent = doc.label;
+          row.appendChild(cb);
+          row.appendChild(lbl);
+          docsGroup.appendChild(row);
+        }
+      }
+
+      function buildMcpsGroup() {
+        for (const mcp of DATABASE.mcps) {
+          const row = document.createElement("div");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.id = "mcp-" + mcp.id;
+          cb.name = "mcp-" + mcp.id;
+          const lbl = document.createElement("label");
+          lbl.htmlFor = cb.id;
+          lbl.textContent = mcp.label;
+          row.appendChild(cb);
+          row.appendChild(lbl);
+          mcpsGroup.appendChild(row);
+        }
+      }
+
+      function numOrNull(value) {
+        if (value === "" || value == null) return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function getState() {
+        const audit = { security: false, performance: false, misc: false };
+        for (const cb of auditGroup.querySelectorAll('input[type="checkbox"]')) {
+          audit[cb.value] = cb.checked;
+        }
+
+        return {
+          projectName: form.elements.projectName.value,
+          projectDescription: form.elements.projectDescription.value,
+          projectType: form.elements.projectType.value,
+          stack: form.elements.stack.value,
+          task: selectedTask,
+          audit: audit,
+          sprintObjective: form.elements.sprintObjective.value,
+          phasedExecution: form.elements.phasedExecution.checked,
+          totalPhases: numOrNull(form.elements.totalPhases.value),
+          currentPhase: numOrNull(form.elements.currentPhase.value),
+          phaseSpecPath: form.elements.phaseSpecPath.value,
+          hasReadme: form.elements.hasReadme ? form.elements.hasReadme.checked : false,
+          agentsDoc: form.elements.agentsDoc ? form.elements.agentsDoc.checked : false,
+          scopeDoc: form.elements.scopeDoc ? form.elements.scopeDoc.checked : false,
+          changelogDoc: form.elements.changelogDoc ? form.elements.changelogDoc.checked : false,
+          designDoc: form.elements.designDoc ? form.elements.designDoc.checked : false,
+          mcpXcode: form.elements["mcp-xcode"] ? form.elements["mcp-xcode"].checked : false,
+          mcpPaper: form.elements["mcp-paper"] ? form.elements["mcp-paper"].checked : false,
+          mcpExpo: form.elements["mcp-expo"] ? form.elements["mcp-expo"].checked : false,
+          mcpPlaywright: form.elements["mcp-playwright"] ? form.elements["mcp-playwright"].checked : false,
+          caveman: form.elements.caveman.checked
+        };
+      }
+
+      // Join a list of doc phrases with Oxford-comma style: "a", "a and b", "a, b, and c".
+      function joinDocs(items) {
+        if (items.length === 0) return "";
+        if (items.length === 1) return items[0];
+        if (items.length === 2) return items[0] + " and " + items[1];
+        return items.slice(0, -1).join(", ") + ", and " + items[items.length - 1];
+      }
+
+      // Article helper: "a" before consonants, "an" before vowels.
+      function article(word) {
+        return /^[aeiou]/i.test(word) ? "an" : "a";
+      }
+
+      // Normalize a project description for the role line. Strips a leading
+      // "a"/"an" (we re-add the correct article), preserves a leading "the"
+      // (already grammatical, no article needed). Returns {keep, text}.
+      // keep=true  -> use text verbatim, no article prefix.
+      // keep=false -> prepend article(text) + " " before text.
+      function normalizeDesc(s) {
+        const theMatch = /^\s*the\s+/i.exec(s);
+        if (theMatch) return { keep: true, text: s.trim() };
+        const aMatch = /^\s*(a|an)\s+/i.exec(s);
+        if (aMatch) return { keep: false, text: s.replace(/^\s*(a|an)\s+/i, "").trim() };
+        return { keep: false, text: s.trim() };
+      }
+
+      // Pure prompt assembler. No DOM access. Follows canonical assembly order
+      // from docs/implementation-plan/README.md. Sections separated by one blank
+      // line; bullets use "- "; single directives are plain lines; single
+      // trailing newline at end.
+      function generatePrompt(state) {
+        const sections = [];
+
+        // a. Role line. Empty name/desc drop their clauses instead of injecting
+        // fabricated placeholders, so the agent asks the user rather than
+        // hallucinating around fake context. No task -> neutral "developer" role
+        // (still followed by the same optional "working on <name>" + desc clauses).
+        const name = state.projectName && state.projectName.trim();
+        const descRaw = state.projectDescription && state.projectDescription.trim();
+        const role = state.task
+          ? DATABASE.rolePhrase(state.projectType, state.stack, state.task)
+          : "developer";
+        let roleLine = "You're a " + role;
+        if (descRaw) {
+          const d = normalizeDesc(descRaw);
+          const descClause = d.keep ? d.text : article(d.text) + " " + d.text;
+          // With a name: "working on <name>, <descClause>".
+          // Without a name: the description becomes the project reference,
+          // so "working on <descClause>" (no comma, no separate name).
+          roleLine += name
+            ? " working on " + name + ", " + descClause
+            : " working on " + descClause;
+        } else if (name) {
+          roleLine += " working on " + name;
+        }
+        roleLine += ".";
+        sections.push(roleLine);
+
+        // b. Sprint line. Phase clause appended here (spec path moved to docs).
+        const objective = (state.sprintObjective && state.sprintObjective.trim()) || "to be defined";
+        let sprintLine = "The objective of this sprint is to: " + objective;
+        if (state.phasedExecution === true &&
+            Number.isInteger(state.currentPhase) && state.currentPhase > 0 &&
+            Number.isInteger(state.totalPhases) && state.totalPhases > 0 &&
+            state.currentPhase <= state.totalPhases) {
+          sprintLine += ", you'll be executing only phase " + state.currentPhase + " of " + state.totalPhases;
+        }
+        sprintLine += ".";
+        sections.push(sprintLine);
+
+        // c. Base docs line.
+        const docs = [];
+        for (const doc of DATABASE.baseDocs) {
+          if (state[doc.id] === true) docs.push(doc.phrase);
+        }
+        if (state.phasedExecution === true && state.phaseSpecPath && state.phaseSpecPath.trim()) {
+          docs.push(state.phaseSpecPath.trim());
+        }
+        const singleDoc = docs.length === 1;
+        if (docs.length === 0) {
+          sections.push("Start by reading the base documents: none specified.");
+        } else if (!singleDoc) {
+          sections.push("Start by reading the base documents: " + joinDocs(docs) + ".");
+        }
+        // single doc: no "Start by reading" line; first approach bullet rewritten below.
+
+        // d. Execution approach block. Header + bullets. Fallback to implement.
+        // First bullet is the "Read all reference files listed above" line:
+        //   - zero docs  -> drop it (nothing is "listed above")
+        //   - single doc -> rewrite it to name the one doc
+        //   - 2+ docs    -> keep as-is
+        const taskKey = state.task || "neutral";
+        const approachLines = (DATABASE.blocks.executionApproach[taskKey] ||
+                               DATABASE.blocks.executionApproach.implement).slice();
+        if (docs.length === 0) {
+          approachLines.shift();
+        } else if (singleDoc) {
+          const template = DATABASE.blocks.singleDocApproach[taskKey] || DATABASE.blocks.singleDocApproach.implement;
+          approachLines[0] = template.replace("{doc}", docs[0]);
+        }
+        const projectTypeApproach = DATABASE.projectTypeApproach[state.projectType];
+        if (projectTypeApproach) {
+          approachLines.push(projectTypeApproach);
+        }
+        const approachBlock = ["Execution approach:"].concat(approachLines.map(function (l) { return "- " + l; }));
+        sections.push(approachBlock.join("\n"));
+
+        // e. Failure protocol (bullet, all tasks).
+        sections.push("- " + DATABASE.blocks.failureProtocol);
+
+        // f. Conditional consideration blocks.
+        if (state.task === "design") {
+          sections.push(DATABASE.blocks.designConsideration);
+        }
+        if (state.task === "implement" || state.task === "debug") {
+          sections.push("- " + DATABASE.blocks.verificationReport);
+        }
+        if (state.task === "audit") {
+          const auditLines = [];
+          for (const key of Object.keys(DATABASE.auditGuidance)) {
+            if (state.audit && state.audit[key] === true) {
+              auditLines.push("- " + DATABASE.auditGuidance[key]);
+            }
+          }
+          if (auditLines.length > 0) sections.push(auditLines.join("\n"));
+        }
+
+        // g. Skills/MCP lines. Caveman (if on) + context7 (always), then MCPs.
+        const skillLines = [];
+        if (state.caveman === true) skillLines.push(DATABASE.blocks.caveman);
+        skillLines.push(DATABASE.blocks.context7);
+        const mcpStateKeys = { xcode: "mcpXcode", paper: "mcpPaper", expo: "mcpExpo", playwright: "mcpPlaywright" };
+        for (const mcp of DATABASE.mcps) {
+          if (state[mcpStateKeys[mcp.id]] === true) skillLines.push(mcp.phrase);
+        }
+        sections.push(skillLines.join("\n"));
+
+        // g. Questions line.
+        sections.push(DATABASE.blocks.askQuestions);
+
+        // h. Tasks. Header + numbered list. Null task fallback.
+        if (state.task) {
+          const list = DATABASE.taskLists[state.task] || [];
+          const numbered = list.map(function (item, i) { return (i + 1) + ". " + item; });
+          sections.push(DATABASE.blocks.tasksHeader + "\n" + numbered.join("\n"));
+        } else {
+          sections.push("Tasks: (select a task type)");
+        }
+
+        return sections.join("\n\n") + "\n";
+      }
+
+      function updatePrompt() {
+        document.getElementById("promptOutput").textContent = generatePrompt(getState());
+      }
+
+      function isDefaultState(state) {
+        // "Non-default" = user filled any free-text or selected task/audit/docs/mcps/phases.
+        // Caveman defaults to checked; not treated as user input.
+        if (state.projectName && state.projectName.trim()) return false;
+        if (state.projectDescription && state.projectDescription.trim()) return false;
+        if (state.sprintObjective && state.sprintObjective.trim()) return false;
+        if (state.task !== null) return false;
+        if (state.phasedExecution === true) return false;
+        if (state.totalPhases !== null || state.currentPhase !== null) return false;
+        if (state.phaseSpecPath && state.phaseSpecPath.trim()) return false;
+        for (const k of Object.keys(state.audit)) {
+          if (state.audit[k] === true) return false;
+        }
+        const docKeys = ["hasReadme","agentsDoc","scopeDoc","changelogDoc","designDoc"];
+        for (const k of docKeys) {
+          if (state[k] === true) return false;
+        }
+        const mcpKeys = ["mcpXcode","mcpPaper","mcpExpo","mcpPlaywright"];
+        for (const k of mcpKeys) {
+          if (state[k] === true) return false;
+        }
+        // projectType/stack default to first option — not user input.
+        return true;
+      }
+
+      function updatePhaseHint() {
+        const hint = document.getElementById("phaseHint");
+        if (!form.elements.phasedExecution.checked) {
+          hint.hidden = true;
+          hint.textContent = "";
+          return;
+        }
+        const total = numOrNull(form.elements.totalPhases.value);
+        const current = numOrNull(form.elements.currentPhase.value);
+        let msg = "";
+        if (total === null || current === null) {
+          msg = "Total phases and current phase are required when phased execution is on.";
+        } else if (current > total) {
+          msg = "Current phase (" + current + ") is greater than total phases (" + total + ").";
+        }
+        if (msg) {
+          hint.textContent = msg;
+          hint.hidden = false;
+        } else {
+          hint.hidden = true;
+          hint.textContent = "";
+        }
+      }
+
+      function flashTaskLabel() {
+        const legend = document.getElementById("taskLegend");
+        legend.classList.remove("flash");
+        // Reflow to restart animation.
+        void legend.offsetWidth;
+        legend.classList.add("flash");
+      }
+
+      function fallbackExecCommand(text) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.top = "-9999px";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+          if (ok) return true;
+        } catch (e) { /* fall through */ }
+        const pre = document.getElementById("promptOutput");
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        setWarning("Clipboard unavailable. Select the prompt and press Cmd/Ctrl+C.", "warn");
+        return false;
+      }
+
+      function copyToClipboard(text) {
+        // Primary: async clipboard API. Requires secure context (https/localhost), not file://.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text)
+            .then(function () { return true; })
+            .catch(function () { return fallbackExecCommand(text); });
+        }
+        return Promise.resolve(fallbackExecCommand(text));
+      }
+
+      function handleCopy() {
+        const state = getState();
+        const text = generatePrompt(state);
+        if (state.task === null) flashTaskLabel();
+        const btn = document.getElementById("copyBtn");
+        const original = btn.textContent;
+        copyToClipboard(text).then(function (ok) {
+          btn.textContent = ok ? "Copied!" : "Copy failed";
+          btn.classList.toggle("copied", ok);
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove("copied");
+          }, 1500);
+        });
+      }
+
+      function render() {
+        const state = getState();
+        stateDump.textContent = JSON.stringify(state, null, 2);
+        updatePrompt();
+        updatePhaseHint();
+        const empty = isDefaultState(state);
+        const emptyHint = document.getElementById("emptyHint");
+        const promptOutput = document.getElementById("promptOutput");
+        emptyHint.hidden = !empty;
+        promptOutput.hidden = empty;
+      }
+
+      // --- Template export / import (Phase 5) ---
+
+      const templateWarning = document.getElementById("templateWarning");
+
+      function setWarning(message, kind) {
+        if (!message) {
+          templateWarning.hidden = true;
+          templateWarning.textContent = "";
+          templateWarning.classList.remove("error", "warn");
+          return;
+        }
+        templateWarning.hidden = false;
+        templateWarning.textContent = message;
+        templateWarning.classList.remove("error", "warn");
+        if (kind) templateWarning.classList.add(kind);
+      }
+
+      function timestampStamp() {
+        const d = new Date();
+        const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+        return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+               "-" + pad(d.getHours()) + pad(d.getMinutes());
+      }
+
+      function exportTemplate() {
+        const name = window.prompt("Template name:", "Untitled");
+        if (name === null) return; // user cancelled
+        const envelope = {
+          app: "teleprompter",
+          templateVersion: 1,
+          dbVersion: DATABASE.version,
+          exportedAt: new Date().toISOString(),
+          name: (name && name.trim()) || "Untitled",
+          state: getState()
+        };
+        const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const safeName = (envelope.name || "teleprompter-template")
+          .trim()
+          .replace(/[^a-zA-Z0-9-_]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "teleprompter-template";
+        a.href = url;
+        a.download = safeName + "-" + timestampStamp() + ".json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      function applyState(state) {
+        if (!state || typeof state !== "object") return;
+        // Forward-compatible: only set keys we know. Missing keys leave current value.
+        const setVal = function (el, value) {
+          if (!el || value === undefined) return;
+          el.value = value;
+        };
+        const setChecked = function (el, value) {
+          if (!el || value === undefined) return;
+          el.checked = value === true;
+        };
+
+        setVal(form.elements.projectName, state.projectName);
+        setVal(form.elements.projectDescription, state.projectDescription);
+        if (DATABASE.projectTypes.indexOf(state.projectType) !== -1) {
+          setVal(form.elements.projectType, state.projectType);
+        }
+        if (DATABASE.stacks.indexOf(state.stack) !== -1) {
+          setVal(form.elements.stack, state.stack);
+        }
+
+        if (state.task !== undefined) {
+          if (DATABASE.tasks[state.task]) {
+            selectTask(state.task);
+          } else if (state.task === null) {
+            selectTask(null);
+          }
+        }
+
+        if (state.audit && typeof state.audit === "object") {
+          for (const cb of auditGroup.querySelectorAll('input[type="checkbox"]')) {
+            setChecked(cb, state.audit[cb.value]);
+          }
+        }
+
+        setVal(form.elements.sprintObjective, state.sprintObjective);
+        setChecked(form.elements.phasedExecution, state.phasedExecution);
+        setVal(form.elements.totalPhases,
+          state.totalPhases === null ? "" : state.totalPhases);
+        setVal(form.elements.currentPhase,
+          state.currentPhase === null ? "" : state.currentPhase);
+        setVal(form.elements.phaseSpecPath, state.phaseSpecPath);
+
+        setChecked(form.elements.hasReadme, state.hasReadme);
+        setChecked(form.elements.agentsDoc, state.agentsDoc);
+        setChecked(form.elements.scopeDoc, state.scopeDoc);
+        setChecked(form.elements.changelogDoc, state.changelogDoc);
+        setChecked(form.elements.designDoc, state.designDoc);
+        setChecked(form.elements["mcp-xcode"], state.mcpXcode);
+        setChecked(form.elements["mcp-paper"], state.mcpPaper);
+        setChecked(form.elements["mcp-expo"], state.mcpExpo);
+        setChecked(form.elements["mcp-playwright"], state.mcpPlaywright);
+        setChecked(form.elements.caveman, state.caveman);
+
+        refreshVisibility();
+      }
+
+      function importTemplate(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function () {
+          let envelope;
+          try {
+            envelope = JSON.parse(reader.result);
+          } catch (e) {
+            setWarning("Import failed: file is not valid JSON.", "error");
+            return;
+          }
+          if (envelope.app !== "teleprompter") {
+            setWarning("Import failed: not a Teleprompter template (app mismatch).", "error");
+            return;
+          }
+          if (typeof envelope.state !== "object" || envelope.state === null) {
+            setWarning("Import failed: missing or invalid state object.", "error");
+            return;
+          }
+          if (envelope.templateVersion !== 1) {
+            setWarning("Import failed: unsupported templateVersion " + envelope.templateVersion + ".", "error");
+            return;
+          }
+
+          applyState(envelope.state);
+          render();
+
+          if (envelope.dbVersion !== DATABASE.version) {
+            setWarning("Warning: template was exported with dbVersion \"" +
+              envelope.dbVersion + "\" but current database version is \"" +
+              DATABASE.version + "\". Form still loaded.", "warn");
+          } else {
+            setWarning("");
+          }
+        };
+        reader.onerror = function () {
+          setWarning("Import failed: could not read file.", "error");
+        };
+        reader.readAsText(file);
+      }
+
+      function init() {
+        if (typeof DATABASE === "undefined" || window.__DB_FAILED === true) {
+          document.body.innerHTML = '<p style="padding:2rem;font-family:sans-serif;color:#991B1B">Failed to load database.js. Place it next to index.html and refresh.</p>';
+          return;
+        }
+        populateSelect(form.elements.projectType, DATABASE.projectTypes, true);
+        populateSelect(form.elements.stack, DATABASE.stacks, true);
+
+        buildTaskGroup();
+        buildAuditGroup();
+        buildDocsGroup();
+        buildMcpsGroup();
+
+        form.elements.phasedExecution.addEventListener("change", function () {
+          refreshVisibility();
+          render();
+        });
+
+        form.addEventListener("input", render);
+        form.addEventListener("change", render);
+
+        // Template export/import wiring (Phase 5)
+        document.getElementById("exportBtn").addEventListener("click", exportTemplate);
+        document.getElementById("importBtn").addEventListener("click", function () {
+          document.getElementById("importFile").click();
+        });
+        const importFile = document.getElementById("importFile");
+        importFile.addEventListener("change", function () {
+          if (this.files && this.files[0]) {
+            importTemplate(this.files[0]);
+          }
+          this.value = ""; // allow re-selecting same file
+        });
+
+        // Phase 6 — Copy button
+        document.getElementById("copyBtn").addEventListener("click", handleCopy);
+
+        // Phase 6 — Strip non-digits from number inputs (defensive; type=number already filters most).
+        for (const el of [form.elements.totalPhases, form.elements.currentPhase]) {
+          el.addEventListener("input", function () {
+            const cleaned = (this.value || "").replace(/[^0-9]/g, "");
+            if (cleaned !== this.value) this.value = cleaned;
+          });
+        }
+
+        render();
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+</body>
+</html>

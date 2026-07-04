@@ -1,0 +1,221 @@
+# AGENTS.md — Technical Source of Truth
+
+> The canonical technical reference for the Teleprompter codebase. When the code and this file disagree, the correct action is to align one with the other — not to silently diverge. If you need to change a decision here, do it in a dedicated commit titled `docs(agents): <change>` with rationale in the body.
+
+---
+
+## 1. Architecture
+
+Teleprompter is a **single static HTML page** (`index.html`) that loads a **data file** (`database.js`) via `<script src>`. No server, no build step, no backend, no memory. Open by double-click (`file://`) and it works.
+
+```
+ ┌────────────────────────────────────────────────────────┐
+ │                index.html (executable)                 │
+ │                                                        │
+ │  Markup: semantic form, 23 inputs, fieldset/row hooks  │
+ │  Style:  inline <style> (Paper-MCP-designed)           │
+ │  Logic:  inline <script> IIFE                          │
+ │    getState()       → canonical state object           │
+ │    generatePrompt() → deterministic string assembly    │
+ │    exportTemplate() → JSON download (form state only)  │
+ │    importTemplate() → JSON upload + applyState()       │
+ │    handleCopy()     → clipboard with fallbacks         │
+ └──────────────────────────┬─────────────────────────────┘
+                            │ <script src>
+ ┌──────────────────────────┴─────────────────────────────┐
+ │                  database.js (data)                    │
+ │                                                        │
+ │  const DATABASE = { ... }                              │
+ │    Dropdown options, role templates, task lists,       │
+ │    execution-approach variants, fixed text blocks,     │
+ │    MCP phrases, audit guidance, base-doc filenames.    │
+ └────────────────────────────────────────────────────────┘
+```
+
+### Key architectural decisions
+
+1. **Two-file contract.** `index.html` is the executable (markup + inline CSS + inline JS). `database.js` is the database (all editable prompt content). The user edits `database.js` to change prompt fragments; the user never needs to touch `index.html` to change content. See §3 for the exact split.
+2. **No server, no build.** Runs from `file://`. `<script src="database.js">` loads synchronously in `<head>` before the body renders. No CORS issues, no `fetch()`, no modules. This is why `database.js` is a JS file (`const DATABASE = {...}`) and not JSON — JSON would require `fetch()` + a local server.
+3. **Deterministic generation.** Same inputs → same prompt, always. No LLM, no inference, no randomness. `generatePrompt(state)` is a pure function: reads `DATABASE` + state, returns a string. No side effects, no DOM access inside it.
+4. **Templates capture form state only.** Export/import = JSON of the state object (`getState()`). The database is NOT bundled in the template — it stays shared/current. On import, `dbVersion` is compared and a non-blocking warning is shown if it differs, but the form still loads. Forward-compatible: unknown state keys are ignored, missing keys leave current values untouched.
+5. **Single-select task toggle.** The task group (implement/design/debug/audit) is a segmented button group, not checkboxes. Only one task active at a time. Re-clicking the active button deselects it (returns to `null`) — the toggle lives in the click handler; `selectTask(key)` itself is an absolute setter so `applyState`/import can force a specific task without toggle semantics. `selectedTask` is module-scoped state in the IIFE, not a form element value.
+6. **Conditional visibility is centralized.** `refreshVisibility()` is the single function that shows/hides `#auditOptions` (based on `selectedTask === "audit"`) and `#phaseInputs` (based on `phasedExecution` checkbox). Called by `selectTask()`, the `phasedExecution` change handler, and `applyState()` (template import). No other code path toggles visibility.
+7. **Paper MCP owns the visual design.** The inline CSS was authored via the Paper MCP server (Phase 3). Class hooks (`.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, etc.) are the styling contract. Structural markup must not break these hooks.
+8. **Caveman skill is a toggle, default on.** Reflects the user's global preference. The checkbox is checked by default in HTML (`checked` attribute) and in the canonical state (`caveman: true`). Unchecking removes the "Use caveman skill." line from the generated prompt.
+9. **Context7 is always-on.** Hardcoded in every prompt regardless of task or stack. Rationale: AI agents trained on older data give deprecated instructions; Context7 prevents that. Not a toggle.
+10. **Logo is a relative-path `<img>`.** `LogoWhite.png` (3000×1500, white-on-transparent) lives at repo root and is referenced as `<img src="LogoWhite.png">`. Works with `file://`. Has an `onerror` handler that hides the img if the file is missing.
+
+---
+
+## 2. Tech stack
+
+No dependencies. No `package.json`. No `node_modules`. No framework.
+
+| Area | Technology | Version | Notes |
+|---|---|---|---|
+| Markup | HTML5 | — | Semantic form, `<fieldset>`, `<label for>` |
+| Style | CSS (inline) | — | Vanilla, no preprocessor, no Tailwind |
+| Logic | JavaScript (inline) | ES2015+ | IIFE, `"use strict"`, no modules |
+| Data | `database.js` | `DATABASE.version` | `const` object, loaded via `<script src>` |
+| Fonts | System + Inter | — | `'Inter', -apple-system, BlinkMacSystemFont, ...` |
+| Logo | `LogoWhite.png` | 3000×1500 RGBA | White variant, dark header background |
+
+**Runtime:** any modern browser. Open `index.html` directly. No server required.
+
+---
+
+## 3. File ownership: what goes where
+
+The core contract. If you're confused about whether something belongs in `index.html` or `database.js`, ask: **"Would a user editing the database ever want to change this?"**
+
+### `database.js` — content (the "what")
+
+Everything a user might want to edit without touching app logic:
+
+- Dropdown options (`projectTypes`, `stacks`)
+- Task definitions (`tasks`, `auditTypes`)
+- Role templates (`roleTemplates`, `techPrefix`, `rolePhrase()`)
+- Prompt fragments (`blocks.executionApproach.*`, `blocks.singleDocApproach.*`, `blocks.failureProtocol`, `blocks.verificationReport`, `blocks.designConsideration`, `blocks.caveman`, `blocks.context7`, `blocks.askQuestions`, `blocks.tasksHeader`)
+- Task lists (`taskLists.*`)
+- Audit guidance (`auditGuidance.*`)
+- MCP phrases (`mcps[].phrase`)
+- Base-doc filenames (`baseDocs[].phrase`)
+- Project-type-specific approach bullets (`projectTypeApproach`)
+
+### `index.html` — grammar (the "how")
+
+Everything structural that should NOT change when content changes:
+
+- Sentence templates: `"You're a " + role + ...` with conditional clause assembly (see §5)
+- Section headers: `"Execution approach:"`, `"Start by reading the base documents: "`
+- Formatting: `"- "` bullet prefix, `"1. "` numbering, `"\n\n"` section separation
+- Fallback strings: `"none specified."`, `"Tasks: (select a task type)"`, `"to be defined"`, `"You're a developer"` (neutral role when task=null and name empty)
+- All DOM structure, CSS, event wiring, state management, export/import logic, clipboard logic
+
+### Known deviation (to fix)
+
+_(None currently. The single-doc first-bullet variants previously hardcoded here were relocated to `DATABASE.blocks.singleDocApproach` in `database.js` — see F5 in the 2026-07-03 changelog entry.)_
+
+---
+
+## 4. State shape (canonical contract)
+
+`getState()` returns this exact object. `generatePrompt(state)`, `exportTemplate()`, `importTemplate()`, and `applyState()` all depend on it. Do not change keys without updating all consumers.
+
+```js
+{
+  projectName: "",
+  projectDescription: "",
+  projectType: "Next.js",      // first option in DATABASE.projectTypes
+  stack: "Full stack",         // first option in DATABASE.stacks
+  task: null,                  // "implement"|"design"|"debug"|"audit"|null
+  audit: { security: false, performance: false, misc: false },
+  sprintObjective: "",
+  phasedExecution: false,
+  totalPhases: null,           // number|null
+  currentPhase: null,          // number|null
+  phaseSpecPath: "",           // file path string
+  hasReadme: false,
+  agentsDoc: false,
+  scopeDoc: false,
+  changelogDoc: false,
+  designDoc: false,
+  mcpXcode: false,
+  mcpPaper: false,
+  mcpExpo: false,
+  mcpPlaywright: false,
+  caveman: true                // default on
+}
+```
+
+---
+
+## 5. Prompt assembly order
+
+Canonical order, defined in `docs/implementation-plan/README.md` and implemented in `generatePrompt()`:
+
+1. **Role line** — `"You're a " + role + <clause> + "."` where `role` = `rolePhrase(type,stack,task)` when a task is set, else neutral `"developer"`. Clause assembly: name + desc present → `" working on <name>, <descClause>"`; desc only (no name) → `" working on <descClause>"` (the description becomes the project reference); name only → `" working on <name>"`; both empty → no clause. No fabricated placeholders. `descClause` uses `normalizeDesc()`: leading "the" preserved verbatim; leading "a"/"an" stripped and re-added with the correct article (`article()` → "a"/"an" by vowel check).
+2. **Sprint line** — `"The objective of this sprint is to: " + objective` + (if phased: `", you'll be executing only phase " + current + " of " + total + "."`)
+3. **Base docs line** — `"Start by reading the base documents: " + joined(checked docs + phaseSpecPath)` (or `"none specified."` if empty; skipped entirely if exactly one doc — that doc is folded into the first execution-approach bullet instead)
+4. **Execution approach block** — `"Execution approach:"` header + bulleted lines from `DATABASE.blocks.executionApproach[task]` (+ `projectTypeApproach` bullet if exists for the selected project type). When `task` is null, the neutral variant `DATABASE.blocks.executionApproach.neutral` is used (not `implement`) so the approach block doesn't contradict the `"Tasks: (select a task type)"` fallback. First bullet ("Read all reference files listed above...") is dropped when zero docs, or rewritten via `DATABASE.blocks.singleDocApproach[task]` (with `{doc}` slot) when exactly one doc.
+5. **Failure protocol** — `"- " + DATABASE.blocks.failureProtocol` (all tasks)
+6. **Conditional blocks** — `designConsideration` (design only, plain line) · `verificationReport` (implement+debug, bullet) · `auditGuidance.*` (audit + checked audit types, bullets)
+7. **Skills/MCP lines** — `caveman` (if on) + `context7` (always) + checked MCP phrases, one per line
+8. **Questions line** — `DATABASE.blocks.askQuestions`
+9. **Tasks** — `"Tasks:"` header + numbered list from `DATABASE.taskLists[task]`
+
+Sections separated by `"\n\n"`. Single trailing newline. No trailing whitespace.
+
+---
+
+## 6. Template file format
+
+```json
+{
+  "app": "teleprompter",
+  "templateVersion": 1,
+  "dbVersion": "1.0.0",
+  "exportedAt": "2026-07-03T12:00:00.000Z",
+  "name": "My template",
+  "state": { ...canonical state object... }
+}
+```
+
+- `app` must equal `"teleprompter"` or import is rejected.
+- `templateVersion` must equal `1` or import is rejected.
+- `state` must be a non-null object or import is rejected.
+- `dbVersion` mismatch → warning shown, form still loads.
+- Unknown state keys → ignored silently.
+- Missing state keys → current value preserved.
+
+---
+
+## 7. Verification
+
+There is no automated test suite. Verification is manual:
+
+1. Open `index.html` from disk. No console errors (favicon 404 is harmless).
+2. All dropdowns/checkboxes populated from `DATABASE` (not hardcoded in HTML).
+3. Task toggle switches audit block visibility. Phased toggle switches phase inputs.
+4. `#stateDump` (Debug section) updates live and matches the canonical state shape.
+5. Generated prompt updates live in `#promptOutput` as inputs change.
+6. Copy button copies the prompt to clipboard; "Copied!" feedback for 1.5s.
+7. Export downloads a `.json` file; importing it restores the form exactly.
+8. Import validation: tampered `app`, bad JSON, wrong `templateVersion` → error banner, form unchanged.
+
+For deeper verification of `database.js` alone, use a scratch `test.html`:
+```html
+<script src="database.js"></script>
+<script>console.log(DATABASE.version, DATABASE.rolePhrase('Next.js','Full stack','design'))</script>
+```
+Delete the scratch file after.
+
+---
+
+## 8. Implementation plan
+
+The project was built in 6 phases, documented in `docs/implementation-plan/`:
+
+| Phase | File | Owns |
+|---|---|---|
+| 0 | `README.md` | Overview, input map, assembly order |
+| 1 | `phase-1-database.md` | `database.js` schema + content |
+| 2 | `phase-2-form.md` | `index.html` form structure + state shape |
+| 3 | `phase-3-ui-paper.md` | UI design via Paper MCP |
+| 4 | `phase-4-generation.md` | `generatePrompt()` logic |
+| 5 | `phase-5-templates.md` | Export/import templates |
+| 6 | `phase-6-polish.md` | Copy, validation, final polish |
+
+These docs are the design spec. The code is the source of truth. If they disagree, the code wins unless the doc captures an intent the code lost — then fix the code.
+
+---
+
+## 9. Conventions
+
+- **No comments removed without reason.** Existing comments explain "why" not "what." Preserve them.
+- **No new dependencies.** Vanilla JS + CSS only. No npm, no framework, no library.
+- **No build step.** The file you edit is the file the browser runs.
+- **Edit `database.js` for content.** Edit `index.html` for structure/logic/style. See §3.
+- **Keep `generatePrompt` pure.** No DOM access, no side effects. It takes state, returns a string.
+- **IIFE stays.** All JS lives inside the `(function () { "use strict"; ... })()` IIFE. No globals leak.
+- **Class hooks are the styling contract.** `.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, `#docsGroup`, `#mcpsGroup`, `#skillsGroup`, `#promptOutput`, `#stateDump`, `#copyBtn`, `#exportBtn`, `#importBtn`, `#templateWarning`, `#emptyHint`, `#phaseHint`. Don't rename without updating CSS.
