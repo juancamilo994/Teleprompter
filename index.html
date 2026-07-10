@@ -787,13 +787,20 @@
         return Number.isFinite(n) ? n : null;
       }
 
+      // State key for an MCP id by convention: "xcode" -> "mcpXcode".
+      // Keeps the state shape identical to the historical hardcoded keys,
+      // so existing templates stay compatible (see AGENTS.md §4).
+      function mcpStateKey(id) {
+        return "mcp" + id.charAt(0).toUpperCase() + id.slice(1);
+      }
+
       function getState() {
         const audit = { security: false, performance: false, misc: false };
         for (const cb of auditGroup.querySelectorAll('input[type="checkbox"]')) {
           audit[cb.value] = cb.checked;
         }
 
-        return {
+        const state = {
           projectName: form.elements.projectName.value,
           projectDescription: form.elements.projectDescription.value,
           projectType: form.elements.projectType.value,
@@ -804,18 +811,20 @@
           phasedExecution: form.elements.phasedExecution.checked,
           totalPhases: numOrNull(form.elements.totalPhases.value),
           currentPhase: numOrNull(form.elements.currentPhase.value),
-          phaseSpecPath: form.elements.phaseSpecPath.value,
-          hasReadme: form.elements.hasReadme ? form.elements.hasReadme.checked : false,
-          agentsDoc: form.elements.agentsDoc ? form.elements.agentsDoc.checked : false,
-          scopeDoc: form.elements.scopeDoc ? form.elements.scopeDoc.checked : false,
-          changelogDoc: form.elements.changelogDoc ? form.elements.changelogDoc.checked : false,
-          designDoc: form.elements.designDoc ? form.elements.designDoc.checked : false,
-          mcpXcode: form.elements["mcp-xcode"] ? form.elements["mcp-xcode"].checked : false,
-          mcpPaper: form.elements["mcp-paper"] ? form.elements["mcp-paper"].checked : false,
-          mcpExpo: form.elements["mcp-expo"] ? form.elements["mcp-expo"].checked : false,
-          mcpPlaywright: form.elements["mcp-playwright"] ? form.elements["mcp-playwright"].checked : false,
-          caveman: form.elements.caveman.checked
+          phaseSpecPath: form.elements.phaseSpecPath.value
         };
+        // Doc/MCP keys are derived from DATABASE so adding an entry in
+        // database.js is enough — no index.html edits (AGENTS.md §3).
+        for (const doc of DATABASE.baseDocs) {
+          const el = form.elements[doc.id];
+          state[doc.id] = el ? el.checked : false;
+        }
+        for (const mcp of DATABASE.mcps) {
+          const el = form.elements["mcp-" + mcp.id];
+          state[mcpStateKey(mcp.id)] = el ? el.checked : false;
+        }
+        state.caveman = form.elements.caveman.checked;
+        return state;
       }
 
       // Join a list of doc phrases with Oxford-comma style: "a", "a and b", "a, b, and c".
@@ -844,6 +853,12 @@
         return { keep: false, text: s.trim() };
       }
 
+      // Users often end free-text inputs with a period; the sentence templates
+      // add their own. Strip trailing dots + whitespace so we never render "..".
+      function stripTrailingDots(s) {
+        return s.replace(/[.\s]+$/, "");
+      }
+
       // Pure prompt assembler. No DOM access. Follows canonical assembly order
       // from docs/implementation-plan/README.md. Sections separated by one blank
       // line; bullets use "- "; single directives are plain lines; single
@@ -856,11 +871,11 @@
         // hallucinating around fake context. No task -> neutral "developer" role
         // (still followed by the same optional "working on <name>" + desc clauses).
         const name = state.projectName && state.projectName.trim();
-        const descRaw = state.projectDescription && state.projectDescription.trim();
+        const descRaw = state.projectDescription && stripTrailingDots(state.projectDescription.trim());
         const role = state.task
           ? DATABASE.rolePhrase(state.projectType, state.stack, state.task)
           : "developer";
-        let roleLine = "You're a " + role;
+        let roleLine = "You're " + article(role) + " " + role;
         if (descRaw) {
           const d = normalizeDesc(descRaw);
           const descClause = d.keep ? d.text : article(d.text) + " " + d.text;
@@ -877,13 +892,15 @@
         sections.push(roleLine);
 
         // b. Sprint line. Phase clause appended here (spec path moved to docs).
-        const objective = (state.sprintObjective && state.sprintObjective.trim()) || "to be defined";
-        let sprintLine = "The objective of this sprint is to: " + objective;
+        const objectiveRaw = state.sprintObjective && stripTrailingDots(state.sprintObjective.trim());
+        let sprintLine = objectiveRaw
+          ? "The objective of this sprint is to: " + objectiveRaw
+          : "The objective of this sprint is to be defined";
         if (state.phasedExecution === true &&
             Number.isInteger(state.currentPhase) && state.currentPhase > 0 &&
             Number.isInteger(state.totalPhases) && state.totalPhases > 0 &&
             state.currentPhase <= state.totalPhases) {
-          sprintLine += ", you'll be executing only phase " + state.currentPhase + " of " + state.totalPhases;
+          sprintLine += ". You'll execute only phase " + state.currentPhase + " of " + state.totalPhases;
         }
         sprintLine += ".";
         sections.push(sprintLine);
@@ -922,36 +939,47 @@
         if (projectTypeApproach) {
           approachLines.push(projectTypeApproach);
         }
+        // Failure protocol (all tasks) and verification report (implement/debug)
+        // are rendered as a bullet inside the Execution approach block, not as
+        // standalone sections.
+        approachLines.push(DATABASE.blocks.failureProtocol);
+        if (state.task === "implement" || state.task === "debug") {
+          approachLines.push(DATABASE.blocks.verificationReport);
+        }
         const approachBlock = ["Execution approach:"].concat(approachLines.map(function (l) { return "- " + l; }));
         sections.push(approachBlock.join("\n"));
 
-        // e. Failure protocol (bullet, all tasks).
-        sections.push("- " + DATABASE.blocks.failureProtocol);
-
-        // f. Conditional consideration blocks.
+        // e. Conditional consideration blocks.
         if (state.task === "design") {
           sections.push(DATABASE.blocks.designConsideration);
         }
-        if (state.task === "implement" || state.task === "debug") {
-          sections.push("- " + DATABASE.blocks.verificationReport);
-        }
         if (state.task === "audit") {
-          const auditLines = [];
-          for (const key of Object.keys(DATABASE.auditGuidance)) {
-            if (state.audit && state.audit[key] === true) {
-              auditLines.push("- " + DATABASE.auditGuidance[key]);
+          const auditSections = [];
+          for (const key of Object.keys(DATABASE.auditTypes)) {
+            if (!(state.audit && state.audit[key] === true)) continue;
+            const label = DATABASE.auditTypes[key].label;
+            const header = label + " audit (" + state.projectType + "):";
+            const list = DATABASE.auditGuidance[state.projectType] && DATABASE.auditGuidance[state.projectType][key];
+            if (!Array.isArray(list) || list.length === 0) {
+              // No fallback content: projectType is mandatory and phase 5 guarantees all
+              // 12 lists exist, so a missing list is a database bug. Surface it in the
+              // output — do NOT throw: generatePrompt runs on every input event, and a
+              // throw would blank the entire live preview instead of flagging the bug.
+              auditSections.push(header + "\n[ERROR: missing audit checklist for " + state.projectType + " / " + key + " in database.js]");
+              continue;
             }
+            const numbered = list.map(function (item, i) { return (i + 1) + ". " + item; });
+            auditSections.push(header + "\n" + numbered.join("\n"));
           }
-          if (auditLines.length > 0) sections.push(auditLines.join("\n"));
+          if (auditSections.length > 0) sections.push(auditSections.join("\n\n"));
         }
 
-        // g. Skills/MCP lines. Caveman (if on) + context7 (always), then MCPs.
+        // f. Skills/MCP lines. Caveman (if on) + context7 (always), then MCPs.
         const skillLines = [];
         if (state.caveman === true) skillLines.push(DATABASE.blocks.caveman);
         skillLines.push(DATABASE.blocks.context7);
-        const mcpStateKeys = { xcode: "mcpXcode", paper: "mcpPaper", expo: "mcpExpo", playwright: "mcpPlaywright" };
         for (const mcp of DATABASE.mcps) {
-          if (state[mcpStateKeys[mcp.id]] === true) skillLines.push(mcp.phrase);
+          if (state[mcpStateKey(mcp.id)] === true) skillLines.push(mcp.phrase);
         }
         sections.push(skillLines.join("\n"));
 
@@ -987,13 +1015,11 @@
         for (const k of Object.keys(state.audit)) {
           if (state.audit[k] === true) return false;
         }
-        const docKeys = ["hasReadme","agentsDoc","scopeDoc","changelogDoc","designDoc"];
-        for (const k of docKeys) {
-          if (state[k] === true) return false;
+        for (const doc of DATABASE.baseDocs) {
+          if (state[doc.id] === true) return false;
         }
-        const mcpKeys = ["mcpXcode","mcpPaper","mcpExpo","mcpPlaywright"];
-        for (const k of mcpKeys) {
-          if (state[k] === true) return false;
+        for (const mcp of DATABASE.mcps) {
+          if (state[mcpStateKey(mcp.id)] === true) return false;
         }
         // projectType/stack default to first option — not user input.
         return true;
@@ -1186,15 +1212,12 @@
           state.currentPhase === null ? "" : state.currentPhase);
         setVal(form.elements.phaseSpecPath, state.phaseSpecPath);
 
-        setChecked(form.elements.hasReadme, state.hasReadme);
-        setChecked(form.elements.agentsDoc, state.agentsDoc);
-        setChecked(form.elements.scopeDoc, state.scopeDoc);
-        setChecked(form.elements.changelogDoc, state.changelogDoc);
-        setChecked(form.elements.designDoc, state.designDoc);
-        setChecked(form.elements["mcp-xcode"], state.mcpXcode);
-        setChecked(form.elements["mcp-paper"], state.mcpPaper);
-        setChecked(form.elements["mcp-expo"], state.mcpExpo);
-        setChecked(form.elements["mcp-playwright"], state.mcpPlaywright);
+        for (const doc of DATABASE.baseDocs) {
+          setChecked(form.elements[doc.id], state[doc.id]);
+        }
+        for (const mcp of DATABASE.mcps) {
+          setChecked(form.elements["mcp-" + mcp.id], state[mcpStateKey(mcp.id)]);
+        }
         setChecked(form.elements.caveman, state.caveman);
 
         refreshVisibility();

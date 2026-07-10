@@ -77,7 +77,7 @@ Everything a user might want to edit without touching app logic:
 - Role templates (`roleTemplates`, `techPrefix`, `rolePhrase()`)
 - Prompt fragments (`blocks.executionApproach.*`, `blocks.singleDocApproach.*`, `blocks.failureProtocol`, `blocks.verificationReport`, `blocks.designConsideration`, `blocks.caveman`, `blocks.context7`, `blocks.askQuestions`, `blocks.tasksHeader`)
 - Task lists (`taskLists.*`)
-- Audit guidance (`auditGuidance.*`)
+- Audit guidance (`auditGuidance[projectType][auditType]` — 12 lists × 10–15 items, platform-specific)
 - MCP phrases (`mcps[].phrase`)
 - Base-doc filenames (`baseDocs[].phrase`)
 - Project-type-specific approach bullets (`projectTypeApproach`)
@@ -92,9 +92,13 @@ Everything structural that should NOT change when content changes:
 - Fallback strings: `"none specified."`, `"Tasks: (select a task type)"`, `"to be defined"`, `"You're a developer"` (neutral role when task=null and name empty)
 - All DOM structure, CSS, event wiring, state management, export/import logic, clipboard logic
 
-### Known deviation (to fix)
+### Adding entries (docs/MCPs) — database-only
 
-_(None currently. The single-doc first-bullet variants previously hardcoded here were relocated to `DATABASE.blocks.singleDocApproach` in `database.js` — see F5 in the 2026-07-03 changelog entry.)_
+Adding a base doc or an MCP requires ONLY a `database.js` entry — no `index.html` edits. All state wiring is derived from `DATABASE`:
+
+- **Base docs:** state key = `DATABASE.baseDocs[].id` verbatim (e.g. `{ id: "roadmapDoc", label: "Roadmap", phrase: "roadmap.md" }` → state key `roadmapDoc`). `getState()`, `generatePrompt()`, `isDefaultState()`, and `applyState()` all loop over `DATABASE.baseDocs`.
+- **MCPs:** state key derived by `mcpStateKey(id)` = `"mcp" + capitalize(id)` (e.g. `xcode` → `mcpXcode`); checkbox element name = `"mcp-" + id`. Same four functions loop over `DATABASE.mcps`. Convention matches the historical hardcoded keys exactly, so pre-existing templates stay compatible.
+- Templates saved before an entry existed simply lack that key on import → current value preserved (see §6 missing-key rule). New-key entries removed from `database.js` later leave orphan keys in old templates → ignored silently (unknown-key rule).
 
 ---
 
@@ -134,15 +138,14 @@ _(None currently. The single-doc first-bullet variants previously hardcoded here
 
 Canonical order, defined in `docs/implementation-plan/README.md` and implemented in `generatePrompt()`:
 
-1. **Role line** — `"You're a " + role + <clause> + "."` where `role` = `rolePhrase(type,stack,task)` when a task is set, else neutral `"developer"`. Clause assembly: name + desc present → `" working on <name>, <descClause>"`; desc only (no name) → `" working on <descClause>"` (the description becomes the project reference); name only → `" working on <name>"`; both empty → no clause. No fabricated placeholders. `descClause` uses `normalizeDesc()`: leading "the" preserved verbatim; leading "a"/"an" stripped and re-added with the correct article (`article()` → "a"/"an" by vowel check).
-2. **Sprint line** — `"The objective of this sprint is to: " + objective` + (if phased: `", you'll be executing only phase " + current + " of " + total + "."`)
+1. **Role line** — `"You're " + article(role) + " " + role + <clause> + "."` where `role` = `rolePhrase(type,stack,task)` when a task is set, else neutral `"developer"`, and the article is derived via `article()` (not hardcoded — future-proofs a vowel-initial role/techPrefix). Clause assembly: name + desc present → `" working on <name>, <descClause>"`; desc only (no name) → `" working on <descClause>"` (the description becomes the project reference); name only → `" working on <name>"`; both empty → no clause. No fabricated placeholders. `descClause` uses `normalizeDesc()`: leading "the" preserved verbatim; leading "a"/"an" stripped and re-added with the correct article (`article()` → "a"/"an" by vowel check). Project description is read through `stripTrailingDots()` at render time — user-typed trailing periods/whitespace are stripped before use, so a punctuation-only description (e.g. `"."`) becomes empty and the clause is dropped, same as an empty field.
+2. **Sprint line** — `objective ? "The objective of this sprint is to: " + objective : "The objective of this sprint is to be defined"` + (if phased: `". You'll execute only phase " + current + " of " + total`) + `"."`. `objective` is `state.sprintObjective` trimmed and passed through `stripTrailingDots()` at render time; a punctuation-only objective (e.g. `"."`) becomes empty and falls back to the "to be defined" form (no colon, no double "to"). The phased clause is its own sentence (period before it, not a comma) to avoid a comma splice.
 3. **Base docs line** — `"Start by reading the base documents: " + joined(checked docs + phaseSpecPath)` (or `"none specified."` if empty; skipped entirely if exactly one doc — that doc is folded into the first execution-approach bullet instead)
-4. **Execution approach block** — `"Execution approach:"` header + bulleted lines from `DATABASE.blocks.executionApproach[task]` (+ `projectTypeApproach` bullet if exists for the selected project type). When `task` is null, the neutral variant `DATABASE.blocks.executionApproach.neutral` is used (not `implement`) so the approach block doesn't contradict the `"Tasks: (select a task type)"` fallback. First bullet ("Read all reference files listed above...") is dropped when zero docs, or rewritten via `DATABASE.blocks.singleDocApproach[task]` (with `{doc}` slot) when exactly one doc.
-5. **Failure protocol** — `"- " + DATABASE.blocks.failureProtocol` (all tasks)
-6. **Conditional blocks** — `designConsideration` (design only, plain line) · `verificationReport` (implement+debug, bullet) · `auditGuidance.*` (audit + checked audit types, bullets)
-7. **Skills/MCP lines** — `caveman` (if on) + `context7` (always) + checked MCP phrases, one per line
-8. **Questions line** — `DATABASE.blocks.askQuestions`
-9. **Tasks** — `"Tasks:"` header + numbered list from `DATABASE.taskLists[task]`
+4. **Execution approach block** — `"Execution approach:"` header + bulleted lines from `DATABASE.blocks.executionApproach[task]` (+ `projectTypeApproach` bullet if exists for the selected project type). When `task` is null, the neutral variant `DATABASE.blocks.executionApproach.neutral` is used (not `implement`) so the approach block doesn't contradict the `"Tasks: (select a task type)"` fallback. First bullet ("Read all reference files listed above...") is dropped when zero docs, or rewritten via `DATABASE.blocks.singleDocApproach[task]` (with `{doc}` slot) when exactly one doc. `DATABASE.blocks.failureProtocol` (all tasks) and, for implement/debug, `DATABASE.blocks.verificationReport` are appended as the final bullets inside this same block — not standalone sections — so there are no floating orphan bullets in the output.
+5. **Conditional blocks** — `designConsideration` (design only, plain line) · `auditGuidance[projectType][auditType]` (audit + checked audit types — one section per checked type: header `"<Label> audit (<projectType>):"` + numbered 10–15-item list, sections joined by blank line; missing list → visible `[ERROR: ...]` line, never a throw)
+6. **Skills/MCP lines** — `caveman` (if on) + `context7` (always) + checked MCP phrases, one per line
+7. **Questions line** — `DATABASE.blocks.askQuestions`
+8. **Tasks** — `"Tasks:"` header + numbered list from `DATABASE.taskLists[task]`
 
 Sections separated by `"\n\n"`. Single trailing newline. No trailing whitespace.
 
@@ -198,6 +201,8 @@ node -e 'const D=new Function(require("fs").readFileSync("./database.js","utf8")
 ---
 
 ## 8. Implementation plan
+
+> Note: `docs/*` is git-ignored — these plan files exist locally on the author's machine but are not in the repository. The code and this file are the only versioned sources of truth.
 
 The project was built in 6 phases, documented in `docs/implementation-plan/`:
 

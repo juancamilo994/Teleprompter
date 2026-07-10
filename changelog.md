@@ -37,6 +37,38 @@ All notable changes to Teleprompter are logged here, newest first. Use this file
 
 ---
 
+## 2026-07-10 — Prompt polish (grammar + formatting)
+
+### Fixed
+
+- Empty sprint objective no longer renders "is to: to be defined" (double "to"); now "The objective of this sprint is to be defined."
+- Phased-execution clause no longer a comma splice; now a separate sentence: "You'll execute only phase N of M."
+- User-typed trailing periods on Project description and Sprint objective are stripped at render time — no more ".." in the prompt. Punctuation-only input treated as empty (falls back). Raw state/templates unaffected.
+- Failure-protocol and verification-report bullets render inside the "Execution approach:" block instead of as floating orphan bullets.
+- Role-line article derived via `article()` instead of hardcoded "a" (future-proofs vowel-initial roles; current output unchanged).
+
+### Changed (docs)
+
+- `AGENTS.md`: §5 assembly order updated (Tasks 1–4); §3 known deviations recorded; §8 git-ignore note added.
+
+## 2026-07-09 — Audit checklist 1.3.0 (dbVersion 1.3.0)
+
+### Added
+
+- **Platform-specific audit checklists.** `DATABASE.auditGuidance` expanded from 3 platform-agnostic strings to 12 platform-specific lists of 10–15 items each (4 platforms × 3 audit types), ranked by importance. Each list researched from authoritative sources (OWASP, vendor docs, MDN, web.dev) and cited in `docs/audit-checklist-1.3.0/research/<platform>.json` (local working artifacts; `docs/*` is git-ignored). Items are imperative, platform-specific, and checkable by an AI code reviewer reading the repo. Accessibility items folded into `misc` (no separate audit type).
+
+### Changed
+
+- **Audit block rendering.** `generatePrompt` now emits, per checked audit type, a header line `"<Label> audit (<projectType>):"` followed by a numbered 10–15-item list (`1. ` … `N. `), matching the existing `taskLists` numbering style. Multiple checked audit types produce multiple sections separated by a blank line. A missing platform/audit-type list renders a visible `[ERROR: ...]` line instead of throwing. Replaces the previous single-bullet-per-audit-type rendering. Audit prompts are longer but more actionable.
+- **Audit findings report includes file/line + severity.** `blocks.executionApproach.audit` last bullet now instructs the agent to include file/line references and a severity (high/medium/low) for each failure.
+- **`taskLists.audit` deduped.** First item removed (duplicated the "review, don't fix" execution-approach bullet in the same prompt). List is now 3 items.
+- **`DATABASE.version` bumped `1.2.0` → `1.3.0`.** Audit prompt output changes for any audit task with at least one checked audit type. Old templates with `dbVersion: "1.2.0"` still import (state shape unchanged) and trigger the existing mismatch warning.
+
+### Changed (docs)
+
+- `AGENTS.md` §3 lists `auditGuidance[projectType][auditType]` under database content; §5.6 documents the header + numbered-list rendering.
+- Implementation plan: `docs/audit-checklist-1.3.0/` (README + 8 phase files + `research/` JSON outputs).
+
 <!-- NEW ENTRIES ABOVE THIS LINE -->
 
 ## 2026-07-03 — Audit ship-now fixes (dbVersion 1.2.0)
