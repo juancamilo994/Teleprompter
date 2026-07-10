@@ -190,6 +190,11 @@ For deeper verification of `database.js` alone, use a scratch `test.html`:
 ```
 Delete the scratch file after.
 
+Headless alternative (no browser, no scratch file): `require("./database.js")` does NOT work — no `module.exports` by design (§1.2). Use `new Function`, not `vm.runInNewContext` — top-level `const` declarations are lexical and never become properties of the vm sandbox, so `sandbox.DATABASE` is always `undefined`:
+```bash
+node -e 'const D=new Function(require("fs").readFileSync("./database.js","utf8")+";return DATABASE;")();console.log(D.version, D.rolePhrase("Next.js","Full stack","design"));'
+```
+
 ---
 
 ## 8. Implementation plan
