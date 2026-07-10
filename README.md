@@ -7,7 +7,7 @@ A local web tool to author prompts for AI coding agents. No server, no build ste
 1. Open `index.html` in any browser.
 2. Fill in the form (project, task, sprint, documents, MCPs, skills).
 3. The right pane shows the generated prompt live. Click **Copy prompt** to copy it to the clipboard.
-4. Use **Export template** / **Import template** to save and reload a form state as JSON.
+4. Use **Save template** / **Open template** to save and reload a form state as JSON.
 
 ## How it works
 

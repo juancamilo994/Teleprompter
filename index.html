@@ -76,10 +76,17 @@
       align-items: flex-start;
     }
 
+    /* Left column (input card + debug) */
+    #leftPanel {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex-shrink: 0;
+      width: 560px;
+    }
+
     /* Card container (left) */
     #teleprompter {
-      width: 560px;
-      flex-shrink: 0;
       padding: 32px 40px;
       background-color: #FFFFFF;
       border-radius: 12px;
@@ -416,7 +423,7 @@
     }
     #promptOutput[hidden] { display: none; }
 
-    /* Debug toggle (inside right panel) */
+    /* Debug toggle (below input card) */
     #debugToggle {
       text-align: left;
     }
@@ -500,6 +507,9 @@
         width: 100%;
         padding: 20px;
       }
+      #leftPanel {
+        width: 100%;
+      }
       .row {
         flex-direction: column;
         align-items: stretch;
@@ -531,16 +541,17 @@
     <img src="LogoWhite.png" alt="Logo" onerror="this.style.display='none'" />
     <h1>Teleprompter</h1>
     <div id="actionBar">
-      <button type="button" id="importBtn">Import template</button>
-      <button type="button" id="exportBtn">Export template</button>
+      <button type="button" id="openBtn">Open template</button>
+      <button type="button" id="saveBtn">Save template</button>
       <button type="button" id="copyBtn">Copy prompt</button>
     </div>
-    <input type="file" id="importFile" accept="application/json,.json" hidden>
+    <input type="file" id="openFile" accept="application/json,.json" hidden>
   </header>
 
   <p id="templateWarning" hidden></p>
 
   <div id="dualContainer">
+  <div id="leftPanel">
   <form id="teleprompter" onsubmit="return false;">
     <!-- Project -->
     <fieldset class="section">
@@ -640,6 +651,12 @@
     </fieldset>
   </form>
 
+  <details id="debugToggle">
+    <summary>Debug: state dump</summary>
+    <pre id="stateDump"></pre>
+  </details>
+  </div>
+
   <div id="rightPanel">
     <div id="promptPreview">
       <div class="preview-header">
@@ -649,10 +666,6 @@
       <p id="emptyHint" hidden>Fill in the form to build your prompt.</p>
       <pre id="promptOutput"></pre>
     </div>
-    <details id="debugToggle">
-      <summary>Debug: state dump</summary>
-      <pre id="stateDump"></pre>
-    </details>
   </div>
   </div>
 
@@ -1104,8 +1117,8 @@
                "-" + pad(d.getHours()) + pad(d.getMinutes());
       }
 
-      function exportTemplate() {
-        const name = window.prompt("Template name:", "Untitled");
+      function saveTemplate() {
+        const name = window.prompt("Template name:", "Prompt template");
         if (name === null) return; // user cancelled
         const envelope = {
           app: "teleprompter",
@@ -1187,7 +1200,7 @@
         refreshVisibility();
       }
 
-      function importTemplate(file) {
+      function openTemplate(file) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function () {
@@ -1215,7 +1228,7 @@
           render();
 
           if (envelope.dbVersion !== DATABASE.version) {
-            setWarning("Warning: template was exported with dbVersion \"" +
+            setWarning("Warning: template was saved with dbVersion \"" +
               envelope.dbVersion + "\" but current database version is \"" +
               DATABASE.version + "\". Form still loaded.", "warn");
           } else {
@@ -1249,15 +1262,15 @@
         form.addEventListener("input", render);
         form.addEventListener("change", render);
 
-        // Template export/import wiring (Phase 5)
-        document.getElementById("exportBtn").addEventListener("click", exportTemplate);
-        document.getElementById("importBtn").addEventListener("click", function () {
-          document.getElementById("importFile").click();
+        // Template save/open wiring (Phase 5)
+        document.getElementById("saveBtn").addEventListener("click", saveTemplate);
+        document.getElementById("openBtn").addEventListener("click", function () {
+          document.getElementById("openFile").click();
         });
-        const importFile = document.getElementById("importFile");
-        importFile.addEventListener("change", function () {
+        const openFile = document.getElementById("openFile");
+        openFile.addEventListener("change", function () {
           if (this.files && this.files[0]) {
-            importTemplate(this.files[0]);
+            openTemplate(this.files[0]);
           }
           this.value = ""; // allow re-selecting same file
         });

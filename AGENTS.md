@@ -17,8 +17,8 @@ Teleprompter is a **single static HTML page** (`index.html`) that loads a **data
  │  Logic:  inline <script> IIFE                          │
  │    getState()       → canonical state object           │
  │    generatePrompt() → deterministic string assembly    │
- │    exportTemplate() → JSON download (form state only)  │
- │    importTemplate() → JSON upload + applyState()       │
+ │    saveTemplate()   → JSON download (form state only)  │
+ │    openTemplate()   → JSON upload + applyState()       │
  │    handleCopy()     → clipboard with fallbacks         │
  └──────────────────────────┬─────────────────────────────┘
                             │ <script src>
@@ -100,7 +100,7 @@ _(None currently. The single-doc first-bullet variants previously hardcoded here
 
 ## 4. State shape (canonical contract)
 
-`getState()` returns this exact object. `generatePrompt(state)`, `exportTemplate()`, `importTemplate()`, and `applyState()` all depend on it. Do not change keys without updating all consumers.
+`getState()` returns this exact object. `generatePrompt(state)`, `saveTemplate()`, `openTemplate()`, and `applyState()` all depend on it. Do not change keys without updating all consumers.
 
 ```js
 {
@@ -218,4 +218,4 @@ These docs are the design spec. The code is the source of truth. If they disagre
 - **Edit `database.js` for content.** Edit `index.html` for structure/logic/style. See §3.
 - **Keep `generatePrompt` pure.** No DOM access, no side effects. It takes state, returns a string.
 - **IIFE stays.** All JS lives inside the `(function () { "use strict"; ... })()` IIFE. No globals leak.
-- **Class hooks are the styling contract.** `.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, `#docsGroup`, `#mcpsGroup`, `#skillsGroup`, `#promptOutput`, `#stateDump`, `#copyBtn`, `#exportBtn`, `#importBtn`, `#templateWarning`, `#emptyHint`, `#phaseHint`. Don't rename without updating CSS.
+- **Class hooks are the styling contract.** `.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, `#docsGroup`, `#mcpsGroup`, `#skillsGroup`, `#promptOutput`, `#stateDump`, `#copyBtn`, `#saveBtn`, `#openBtn`, `#templateWarning`, `#emptyHint`, `#phaseHint`. Don't rename without updating CSS.
