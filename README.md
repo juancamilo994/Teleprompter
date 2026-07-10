@@ -1,17 +1,22 @@
+<p align="center">
+  <img src="Banner.jpg" alt="Teleprompter" width="720">
+</p>
+
 # Teleprompter
 
 A local web tool to author prompts for AI coding agents. No server, no build step, no backend — open `index.html` from disk and build better prompts, faster.
 
 ## Usage
 
-1. Open `index.html` in any browser.
-2. Fill in the form (project, task, sprint, documents, MCPs, skills).
-3. The right pane shows the generated prompt live. Click **Copy prompt** to copy it to the clipboard.
-4. Use **Save template** / **Open template** to save and reload a form state as JSON.
+1. Clone or download this repository.
+2. Open `index.html` in any browser.
+3. Fill in the form (project, task, sprint, documents, MCPs, skills).
+4. The right pane shows the generated prompt live. Click **Copy prompt** to copy it to the clipboard.
+5. Use **Save template** / **Open template** to save and reload a form state as JSON.
 
 ## How it works
 
-Two files:
+Two core files:
 
 - `index.html` — the executable: markup + inline CSS + inline JS. Open by double-click.
 - `database.js` — the database: all editable prompt fragments, dropdown options, role templates, task lists. Edit this to change what the generated prompts say; never edit `index.html` for content changes.
