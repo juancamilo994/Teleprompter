@@ -6,6 +6,8 @@
 
 A local web tool to author prompts for AI coding agents. No server, no build step, no backend — open `index.html` from disk and build better prompts, faster.
 
+**Try it online:** https://onecappsteleprompter.vercel.app/
+
 ## Usage
 
 1. Clone or download this repository.
