@@ -43,7 +43,7 @@ Teleprompter is a **single static HTML page** (`index.html`) that loads a **data
 7. **Paper MCP owns the visual design.** The inline CSS was authored via the Paper MCP server (Phase 3). Class hooks (`.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, etc.) are the styling contract. Structural markup must not break these hooks.
 8. **Caveman skill is a toggle, default on.** Reflects the user's global preference. The checkbox is checked by default in HTML (`checked` attribute) and in the canonical state (`caveman: true`). Unchecking removes the "Use caveman skill." line from the generated prompt.
 9. **Context7 is always-on.** Hardcoded in every prompt regardless of task or stack. Rationale: AI agents trained on older data give deprecated instructions; Context7 prevents that. Not a toggle.
-10. **Logo is a relative-path `<img>`.** `LogoWhite.png` (3000×1500, white-on-transparent) lives at repo root and is referenced as `<img src="LogoWhite.png">`. Works with `file://`. Has an `onerror` handler that hides the img if the file is missing.
+10. **Logo is an inline `<svg>`.** The logo is inlined directly in `index.html` as an `<svg>` element (white paths on transparent, viewBox `0 0 6428 1500`), sourced from `LogoSVG.svg`. No external image file is loaded — works with `file://` with no missing-asset 404s. CSS selector `header img, header svg` constrains it to `height: 56px; width: auto; flex-shrink: 0;`. The `LogoWhite.png` file is no longer referenced and may be deleted.
 
 ---
 
@@ -58,7 +58,7 @@ No dependencies. No `package.json`. No `node_modules`. No framework.
 | Logic | JavaScript (inline) | ES2015+ | IIFE, `"use strict"`, no modules |
 | Data | `database.js` | `DATABASE.version` | `const` object, loaded via `<script src>` |
 | Fonts | System + Inter | — | `'Inter', -apple-system, BlinkMacSystemFont, ...` |
-| Logo | `LogoWhite.png` | 3000×1500 RGBA | White variant, dark header background |
+| Logo | inline `<svg>` | viewBox 6428×1500 | White paths on transparent, inlined in `index.html` (sourced from `LogoSVG.svg`) |
 
 **Runtime:** any modern browser. Open `index.html` directly. No server required.
 
