@@ -131,6 +131,7 @@
     /* Inputs */
     input[type="text"],
     input[type="number"],
+    textarea,
     select {
       flex: 1;
       padding: 8px 12px;
@@ -143,8 +144,19 @@
       outline: none;
       transition: border-color 0.15s;
     }
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+    .row:has(textarea) {
+      align-items: flex-start;
+    }
+    .row:has(textarea) > label {
+      padding-top: 8px;
+    }
     input[type="text"]:focus,
     input[type="number"]:focus,
+    textarea:focus,
     select:focus {
       border-color: #2563EB;
     }
@@ -564,7 +576,7 @@
 
       <div class="row">
         <label for="projectDescription">Project description</label>
-        <input type="text" id="projectDescription" name="projectDescription">
+        <textarea id="projectDescription" name="projectDescription" rows="3"></textarea>
       </div>
 
       <div class="row">
@@ -599,7 +611,7 @@
 
       <div class="row">
         <label for="sprintObjective">Sprint objective</label>
-        <input type="text" id="sprintObjective" name="sprintObjective">
+        <textarea id="sprintObjective" name="sprintObjective" rows="3"></textarea>
       </div>
 
       <div class="row">
@@ -772,6 +784,7 @@
           cb.type = "checkbox";
           cb.id = "mcp-" + mcp.id;
           cb.name = "mcp-" + mcp.id;
+          cb.checked = mcp.default === true;
           const lbl = document.createElement("label");
           lbl.htmlFor = cb.id;
           lbl.textContent = mcp.label;
@@ -950,8 +963,8 @@
         sections.push(approachBlock.join("\n"));
 
         // e. Conditional consideration blocks.
-        if (state.task === "design") {
-          sections.push(DATABASE.blocks.designConsideration);
+        if (state.task === "plan") {
+          sections.push(DATABASE.blocks.planConsideration);
         }
         if (state.task === "audit") {
           const auditSections = [];
@@ -974,10 +987,9 @@
           if (auditSections.length > 0) sections.push(auditSections.join("\n\n"));
         }
 
-        // f. Skills/MCP lines. Caveman (if on) + context7 (always), then MCPs.
+        // f. Skills/MCP lines. Caveman (if on), then checked MCPs (Context7 on by default).
         const skillLines = [];
         if (state.caveman === true) skillLines.push(DATABASE.blocks.caveman);
-        skillLines.push(DATABASE.blocks.context7);
         for (const mcp of DATABASE.mcps) {
           if (state[mcpStateKey(mcp.id)] === true) skillLines.push(mcp.phrase);
         }
@@ -1019,7 +1031,7 @@
           if (state[doc.id] === true) return false;
         }
         for (const mcp of DATABASE.mcps) {
-          if (state[mcpStateKey(mcp.id)] === true) return false;
+          if (state[mcpStateKey(mcp.id)] !== (mcp.default === true)) return false;
         }
         // projectType/stack default to first option — not user input.
         return true;

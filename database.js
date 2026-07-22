@@ -1,5 +1,5 @@
 const DATABASE = {
-  version: "1.3.0",
+  version: "1.4.0",
 
   // Dropdown options
   projectTypes: ["Next.js", "Swift", "React Native", "Web"],
@@ -7,8 +7,8 @@ const DATABASE = {
 
   // Task types — multi-toggle in UI, but only one selected at a time
   tasks: {
+    plan:      { label: "Plan" },
     implement: { label: "Implement" },
-    design:    { label: "Design" },
     debug:     { label: "Debug" },
     audit:     { label: "Audit" }
   },
@@ -26,7 +26,7 @@ const DATABASE = {
   // Structure: pick template from roleTemplates[task][stack], then replace "{tech}"
   // with techPrefix[projectType]. debug and audit are stack-agnostic (one template each).
   roleTemplates: {
-    design: {
+    plan: {
       "Full stack": "lead architect and {tech} senior developer",
       "Frontend":   "lead architect and {tech} senior frontend developer",
       "Backend":    "lead architect and {tech} senior backend developer"
@@ -76,8 +76,9 @@ const DATABASE = {
     { id: "designDoc",    label: "Design doc",  phrase: "design.md" }
   ],
 
-  // MCP servers
+  // MCP servers. "default: true" = checked by default (currently only Context7).
   mcps: [
+    { id: "context7", label: "Context7 MCP",      phrase: "Use Context7 MCP if needed to be up-to-date on the latest tools used in the stack.", default: true },
     { id: "xcode",    label: "XCodeBuildMCP MCP", phrase: "Use XCodeBuildMCP MCP if needed" },
     { id: "paper",    label: "Paper MCP",         phrase: "Use Paper MCP for any meaningful design interventions" },
     { id: "expo",     label: "Expo MCP",          phrase: "Use Expo MCP if needed" },
@@ -89,7 +90,7 @@ const DATABASE = {
     // Per-task execution approach. Each task gets its own variant.
     // "Inspect and update files" was implement-specific; now each task has
     // appropriate verbs (create/update for implement, investigate for debug,
-    // understand for design, review for audit).
+    // understand for plan, review for audit).
     // Each array item is rendered as a bullet ("- " prefix) in the prompt.
     executionApproach: {
       neutral: [
@@ -108,10 +109,10 @@ const DATABASE = {
         "Run required tests. If a test cannot run in this environment, clearly state the manual validation steps and what evidence is needed.",
         "Keep changes limited to the fix. Do not refactor unrelated code."
       ],
-      design: [
-        "Read all reference files listed above before designing anything.",
+      plan: [
+        "Read all reference files listed above before planning anything.",
         "Understand the existing codebase structure, patterns, and conventions.",
-        "Design context-independent phases that individual AI coding agents can execute in their own context window.",
+        "Plan context-independent phases that individual AI coding agents can execute in their own context window.",
         "Ensure each phase has its own pre-checks and testing environment."
       ],
       audit: [
@@ -130,9 +131,8 @@ const DATABASE = {
     // Rendered as a bullet inside the Execution approach block.
     verificationReport: "Share verification results explicitly: list each check from the phase spec, whether it passed or failed, and the evidence that supports it.",
 
-    designConsideration: "Consider you'll be developing a plan for an AI agent, so be very specific, clear, and pragmatic with your approach.",
+    planConsideration: "Consider you'll be developing a plan for an AI agent, so be very specific, clear, and pragmatic with your approach.",
     caveman: "Use caveman skill.",
-    context7: "Use Context7 MCP if needed to be up-to-date on the latest tools used in the stack.",
     askQuestions: "Ask any questions you consider important before proceeding.",
     tasksHeader: "Tasks:",
 
@@ -144,7 +144,7 @@ const DATABASE = {
       neutral:   "Read the {doc} before starting anything.",
       implement: "Read the {doc} before editing anything.",
       debug:     "Read the {doc} before investigating anything.",
-      design:    "Read the {doc} before designing anything.",
+      plan:      "Read the {doc} before planning anything.",
       audit:     "Read the {doc} before reviewing anything."
     }
   },
@@ -163,7 +163,7 @@ const DATABASE = {
       "Execute the plan as explained in the documentation",
       "Write a summary at the end with everything you modified, created or deleted, the performed tests, the outcomes, and any blockers or next steps"
     ],
-    design: [
+    plan: [
       "Ensure you understand the task and the context of the source code",
       "Develop an implementation plan in context-independent phases, that individual AI coding agents can perform on its own context window",
       "Ensure each phase has its own pre-checks and testing environments",

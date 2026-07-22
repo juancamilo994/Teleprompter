@@ -38,11 +38,11 @@ Teleprompter is a **single static HTML page** (`index.html`) that loads a **data
 2. **No server, no build.** Runs from `file://`. `<script src="database.js">` loads synchronously in `<head>` before the body renders. No CORS issues, no `fetch()`, no modules. This is why `database.js` is a JS file (`const DATABASE = {...}`) and not JSON — JSON would require `fetch()` + a local server.
 3. **Deterministic generation.** Same inputs → same prompt, always. No LLM, no inference, no randomness. `generatePrompt(state)` is a pure function: reads `DATABASE` + state, returns a string. No side effects, no DOM access inside it.
 4. **Templates capture form state only.** Export/import = JSON of the state object (`getState()`). The database is NOT bundled in the template — it stays shared/current. On import, `dbVersion` is compared and a non-blocking warning is shown if it differs, but the form still loads. Forward-compatible: unknown state keys are ignored, missing keys leave current values untouched.
-5. **Single-select task toggle.** The task group (implement/design/debug/audit) is a segmented button group, not checkboxes. Only one task active at a time. Re-clicking the active button deselects it (returns to `null`) — the toggle lives in the click handler; `selectTask(key)` itself is an absolute setter so `applyState`/import can force a specific task without toggle semantics. `selectedTask` is module-scoped state in the IIFE, not a form element value.
+5. **Single-select task toggle.** The task group (implement/plan/debug/audit) is a segmented button group, not checkboxes. Only one task active at a time. Re-clicking the active button deselects it (returns to `null`) — the toggle lives in the click handler; `selectTask(key)` itself is an absolute setter so `applyState`/import can force a specific task without toggle semantics. `selectedTask` is module-scoped state in the IIFE, not a form element value.
 6. **Conditional visibility is centralized.** `refreshVisibility()` is the single function that shows/hides `#auditOptions` (based on `selectedTask === "audit"`) and `#phaseInputs` (based on `phasedExecution` checkbox). Called by `selectTask()`, the `phasedExecution` change handler, and `applyState()` (template import). No other code path toggles visibility.
 7. **Paper MCP owns the visual design.** The inline CSS was authored via the Paper MCP server (Phase 3). Class hooks (`.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, etc.) are the styling contract. Structural markup must not break these hooks.
 8. **Caveman skill is a toggle, default on.** Reflects the user's global preference. The checkbox is checked by default in HTML (`checked` attribute) and in the canonical state (`caveman: true`). Unchecking removes the "Use caveman skill." line from the generated prompt.
-9. **Context7 is always-on.** Hardcoded in every prompt regardless of task or stack. Rationale: AI agents trained on older data give deprecated instructions; Context7 prevents that. Not a toggle.
+9. **Context7 is an MCP entry, checked by default.** Lives in `DATABASE.mcps` like any other MCP (`{ id: "context7", ..., default: true }`), rendered as a checkbox in External connections. `default: true` on an MCP entry means `buildMcpsGroup()` checks it on load; users can still uncheck it. Rationale: AI agents trained on older data give deprecated instructions; Context7 helps avoid that, but it's now a toggle like the rest.
 10. **Logo is an inline `<svg>`.** The logo is inlined directly in `index.html` as an `<svg>` element (white paths on transparent, viewBox `0 0 6428 1500`), sourced from `LogoSVG.svg`. No external image file is loaded — works with `file://` with no missing-asset 404s. CSS selector `header img, header svg` constrains it to `height: 56px; width: auto; flex-shrink: 0;`. The `LogoWhite.png` file is no longer referenced and may be deleted.
 
 ---
@@ -75,7 +75,7 @@ Everything a user might want to edit without touching app logic:
 - Dropdown options (`projectTypes`, `stacks`)
 - Task definitions (`tasks`, `auditTypes`)
 - Role templates (`roleTemplates`, `techPrefix`, `rolePhrase()`)
-- Prompt fragments (`blocks.executionApproach.*`, `blocks.singleDocApproach.*`, `blocks.failureProtocol`, `blocks.verificationReport`, `blocks.designConsideration`, `blocks.caveman`, `blocks.context7`, `blocks.askQuestions`, `blocks.tasksHeader`)
+- Prompt fragments (`blocks.executionApproach.*`, `blocks.singleDocApproach.*`, `blocks.failureProtocol`, `blocks.verificationReport`, `blocks.planConsideration`, `blocks.caveman`, `blocks.askQuestions`, `blocks.tasksHeader`)
 - Task lists (`taskLists.*`)
 - Audit guidance (`auditGuidance[projectType][auditType]` — 12 lists × 10–15 items, platform-specific)
 - MCP phrases (`mcps[].phrase`)
@@ -97,7 +97,7 @@ Everything structural that should NOT change when content changes:
 Adding a base doc or an MCP requires ONLY a `database.js` entry — no `index.html` edits. All state wiring is derived from `DATABASE`:
 
 - **Base docs:** state key = `DATABASE.baseDocs[].id` verbatim (e.g. `{ id: "roadmapDoc", label: "Roadmap", phrase: "roadmap.md" }` → state key `roadmapDoc`). `getState()`, `generatePrompt()`, `isDefaultState()`, and `applyState()` all loop over `DATABASE.baseDocs`.
-- **MCPs:** state key derived by `mcpStateKey(id)` = `"mcp" + capitalize(id)` (e.g. `xcode` → `mcpXcode`); checkbox element name = `"mcp-" + id`. Same four functions loop over `DATABASE.mcps`. Convention matches the historical hardcoded keys exactly, so pre-existing templates stay compatible.
+- **MCPs:** state key derived by `mcpStateKey(id)` = `"mcp" + capitalize(id)` (e.g. `xcode` → `mcpXcode`); checkbox element name = `"mcp-" + id`. Same four functions loop over `DATABASE.mcps`. Convention matches the historical hardcoded keys exactly, so pre-existing templates stay compatible. An MCP entry may set `default: true` (currently only `context7`) — `buildMcpsGroup()` checks that box on load, and `isDefaultState()` compares against the entry's `default` flag instead of assuming `false`.
 - Templates saved before an entry existed simply lack that key on import → current value preserved (see §6 missing-key rule). New-key entries removed from `database.js` later leave orphan keys in old templates → ignored silently (unknown-key rule).
 
 ---
@@ -112,7 +112,7 @@ Adding a base doc or an MCP requires ONLY a `database.js` entry — no `index.ht
   projectDescription: "",
   projectType: "Next.js",      // first option in DATABASE.projectTypes
   stack: "Full stack",         // first option in DATABASE.stacks
-  task: null,                  // "implement"|"design"|"debug"|"audit"|null
+  task: null,                  // "implement"|"plan"|"debug"|"audit"|null
   audit: { security: false, performance: false, misc: false },
   sprintObjective: "",
   phasedExecution: false,
@@ -124,6 +124,7 @@ Adding a base doc or an MCP requires ONLY a `database.js` entry — no `index.ht
   scopeDoc: false,
   changelogDoc: false,
   designDoc: false,
+  mcpContext7: true,            // default on
   mcpXcode: false,
   mcpPaper: false,
   mcpExpo: false,
@@ -142,8 +143,8 @@ Canonical order, defined in `docs/implementation-plan/README.md` and implemented
 2. **Sprint line** — `objective ? "The objective of this sprint is to: " + objective : "The objective of this sprint is to be defined"` + (if phased: `". You'll execute only phase " + current + " of " + total`) + `"."`. `objective` is `state.sprintObjective` trimmed and passed through `stripTrailingDots()` at render time; a punctuation-only objective (e.g. `"."`) becomes empty and falls back to the "to be defined" form (no colon, no double "to"). The phased clause is its own sentence (period before it, not a comma) to avoid a comma splice.
 3. **Base docs line** — `"Start by reading the base documents: " + joined(checked docs + phaseSpecPath)` (or `"none specified."` if empty; skipped entirely if exactly one doc — that doc is folded into the first execution-approach bullet instead)
 4. **Execution approach block** — `"Execution approach:"` header + bulleted lines from `DATABASE.blocks.executionApproach[task]` (+ `projectTypeApproach` bullet if exists for the selected project type). When `task` is null, the neutral variant `DATABASE.blocks.executionApproach.neutral` is used (not `implement`) so the approach block doesn't contradict the `"Tasks: (select a task type)"` fallback. First bullet ("Read all reference files listed above...") is dropped when zero docs, or rewritten via `DATABASE.blocks.singleDocApproach[task]` (with `{doc}` slot) when exactly one doc. `DATABASE.blocks.failureProtocol` (all tasks) and, for implement/debug, `DATABASE.blocks.verificationReport` are appended as the final bullets inside this same block — not standalone sections — so there are no floating orphan bullets in the output.
-5. **Conditional blocks** — `designConsideration` (design only, plain line) · `auditGuidance[projectType][auditType]` (audit + checked audit types — one section per checked type: header `"<Label> audit (<projectType>):"` + numbered 10–15-item list, sections joined by blank line; missing list → visible `[ERROR: ...]` line, never a throw)
-6. **Skills/MCP lines** — `caveman` (if on) + `context7` (always) + checked MCP phrases, one per line
+5. **Conditional blocks** — `planConsideration` (plan only, plain line) · `auditGuidance[projectType][auditType]` (audit + checked audit types — one section per checked type: header `"<Label> audit (<projectType>):"` + numbered 10–15-item list, sections joined by blank line; missing list → visible `[ERROR: ...]` line, never a throw)
+6. **Skills/MCP lines** — `caveman` (if on) + checked MCP phrases (Context7 checked by default), one per line
 7. **Questions line** — `DATABASE.blocks.askQuestions`
 8. **Tasks** — `"Tasks:"` header + numbered list from `DATABASE.taskLists[task]`
 
@@ -189,13 +190,13 @@ There is no automated test suite. Verification is manual:
 For deeper verification of `database.js` alone, use a scratch `test.html`:
 ```html
 <script src="database.js"></script>
-<script>console.log(DATABASE.version, DATABASE.rolePhrase('Next.js','Full stack','design'))</script>
+<script>console.log(DATABASE.version, DATABASE.rolePhrase('Next.js','Full stack','plan'))</script>
 ```
 Delete the scratch file after.
 
 Headless alternative (no browser, no scratch file): `require("./database.js")` does NOT work — no `module.exports` by design (§1.2). Use `new Function`, not `vm.runInNewContext` — top-level `const` declarations are lexical and never become properties of the vm sandbox, so `sandbox.DATABASE` is always `undefined`:
 ```bash
-node -e 'const D=new Function(require("fs").readFileSync("./database.js","utf8")+";return DATABASE;")();console.log(D.version, D.rolePhrase("Next.js","Full stack","design"));'
+node -e 'const D=new Function(require("fs").readFileSync("./database.js","utf8")+";return DATABASE;")();console.log(D.version, D.rolePhrase("Next.js","Full stack","plan"));'
 ```
 
 ---
