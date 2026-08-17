@@ -85,6 +85,116 @@ const DATABASE = {
     { id: "playwright", label: "Playwright MCP",  phrase: "Use Playwright MCP if needed for some tests" }
   ],
 
+  // Voice input content. Consumed by the dictation feature in index.html.
+  // Logic lives in index.html; everything here is text the owner may retune
+  // without touching app logic (see AGENTS.md section 3).
+  voice: {
+    provider: "groq",
+
+    // Endpoints are OpenAI-compatible. Both accept browser fetch from file://
+    // (Origin: null) — verified 2026-08-08.
+    // index.html refuses to attach the Authorization header unless the URL's
+    // origin is on its own hardcoded allowlist, so editing these values cannot
+    // redirect the API key somewhere else.
+    endpoints: {
+      transcription: "https://api.groq.com/openai/v1/audio/transcriptions",
+      chat:          "https://api.groq.com/openai/v1/chat/completions",
+      models:        "https://api.groq.com/openai/v1/models"
+    },
+
+    models: {
+      // Accepts webm/opus and mp4 directly (no transcoding). Free tier covers
+      // 28,800 audio-seconds/day — see README section 2.1.
+      transcription: "whisper-large-v3-turbo",
+      // Strict structured outputs (constrained decoding) are only available on
+      // the gpt-oss models. Swapping this to a llama model silently downgrades
+      // to best-effort JSON and breaks the schema guarantee.
+      extraction:    "openai/gpt-oss-20b"
+    },
+
+    // Recording caps. maxSeconds is a hard auto-stop; warnSeconds flips the
+    // timer to a warning style. Groq bills a 10s minimum per request.
+    // silenceStopSeconds is deliberately generous: the product is one free-form
+    // monologue about a project, and people pause for several seconds mid-thought
+    // ("it's a Swift app called… Chronos"). A 4s cutoff truncates that sentence
+    // and the user has to start over, which costs far more than the idle seconds
+    // it saves.
+    // maxBlobBytes stays BELOW Groq's own 25 MB limit so the client-side check
+    // always fires before the server's 413. Raising it past 25 MB makes the
+    // guard decorative.
+    limits: {
+      maxSeconds: 120,
+      warnSeconds: 100,
+      silenceStopSeconds: 7,
+      maxBlobBytes: 20 * 1024 * 1024,
+      // Free tier covers ~100 dictations/day at zero cost (README section 2.1),
+      // so most users never spend anything. This rate is only used to reassure
+      // paid-plan users that a dictation is cheap; the real cost guard is
+      // maxSeconds. See phase 3 section 3.10 on how it is presented.
+      costPerAudioHourUsd: 0.04
+    },
+
+    // Passed as the Whisper `prompt` parameter (max 224 tokens). It only steers
+    // spelling and style, not behavior. This is what stops "Next.js" becoming
+    // "the next JS" — the probe showed that exact failure.
+    vocabularyHint: "Teleprompter, Next.js, Swift, SwiftUI, iOS, React Native, Expo, full stack, frontend, backend, plan, implement, debug, audit, sprint objective, phased execution, phase spec, README.md, AGENTS.md, scope.md, changelog.md, design.md, MCP, Context7, XcodeBuildMCP, Paper MCP, Playwright, caveman skill.",
+
+    // System prompt for the extraction step. The JSON schema is built at runtime
+    // from DATABASE (project types, stacks, tasks, docs, MCPs), so this prompt
+    // must NOT restate the allowed values — it would drift from the schema.
+    extractionSystemPrompt: [
+      "You convert a spoken description of a software project into structured form data for a prompt-authoring tool.",
+      "",
+      "Rules:",
+      "1. Only fill a field if the speaker actually referred to it. If they did not mention it, return null for that field. null means 'leave the existing value untouched'.",
+      "2. The speaker may be correcting earlier input (\"actually it's a debug task\", \"sorry, make the description X\"). Treat corrections as normal values for those fields and still return null for everything they did not mention.",
+      "3. Never invent a project name, description, or objective. If the speaker did not say one, return null.",
+      "4. Enumerated fields must use one of the exact allowed values in the schema. If the speaker names a technology, platform, or option that is not in the allowed values (for example C++, Rust, Django, Vue), leave that field null and add the term they said to the unmatched array.",
+      "5. projectDescription is what the product IS. sprintObjective is what they want DONE this time. If the speaker only gives one of the two, fill that one and leave the other null.",
+      "6. Do not include trailing periods in projectName, projectDescription, or sprintObjective. Do not add words the speaker did not say.",
+      "7. totalPhases and currentPhase are integers. Only set phasedExecution to true if the speaker refers to phases, stages, or steps of a plan.",
+      "8. Transcription errors are common with technical terms. \"next JS\", \"next js app\", \"nextjs\" all mean the Next.js option. Map obvious phonetic variants to the correct allowed value; if you are not confident, leave null and add the raw term to unmatched."
+    ].join("\n"),
+
+    // User-facing copy. {slots} are filled by index.html.
+    copy: {
+      micIdle:            "Dictate",
+      micRecording:       "Stop",
+      statusRequesting:   "Waiting for microphone permission…",
+      statusRecording:    "Listening — {seconds}s",
+      statusTranscribing: "Transcribing…",
+      statusExtracting:   "Filling the form…",
+      bannerUnmatched:    "Heard {terms}, which Teleprompter does not support. Those fields were left unchanged — dictate again or set them by hand.",
+      bannerApplied:      "Updated {count} field(s) from your voice input.",
+      bannerNothing:      "Nothing recognised in that recording. Try again, or type it in.",
+      undoLabel:          "Undo",
+      errorNoMic:         "No microphone available in this browser.",
+      errorMicDenied:     "Microphone permission denied. Enable it in your browser settings, then try again.",
+      // Shown when the mic button is pressed with no key stored. This is the
+      // only "feature unavailable" state, and it must always name the fix.
+      errorNoKey:         "Dictation needs a Groq API key. Getting one is free and takes about a minute — open voice settings to add it.",
+      errorNetwork:       "Could not reach Groq. Check your connection and try again.",
+      errorTimeout:       "Groq did not respond in time. Your recording is still in memory — press Retry.",
+      errorTooLarge:      "That recording is too large to send, so it was discarded. Keep it under {seconds}s.",
+      errorEndpoint:      "Blocked a request to an unexpected host. Check that database.js has not been modified.",
+      noticeCapReached:   "Stopped at the {seconds}s limit. Transcribing what was recorded.",
+      retryLabel:         "Retry",
+      errorBadKey:        "Groq rejected the API key. Check it in voice settings.",
+      errorRateLimit:     "Groq rate limit hit. Wait a moment and try again.",
+      errorGeneric:       "Voice input failed: {message}",
+      keyDialogTitle:     "Voice settings",
+      keyDialogIntro:     "Dictation uses your own Groq API key. A free account needs no credit card and covers roughly 100 dictations a day. The key is stored only in this browser (localStorage) and is sent only to api.groq.com. It is never included in exported templates.",
+      keyDialogWarning:   "Anything with access to this page can read a key stored in your browser, including a modified database.js. Only use a key you can rotate, and never load a database.js you do not trust.",
+      keyDialogPlaceholder: "gsk_…",
+      keyDialogSave:      "Save key",
+      keyDialogForget:    "Forget key",
+      keyDialogGetKey:    "Get a free key at console.groq.com/keys — no credit card needed",
+      // Usage, not dollars. Most users are on the free tier and owe nothing, so
+      // a "$0.0013" readout would be false. {seconds} is the recorded length.
+      usageEstimate:      "{seconds}s of audio. The free Groq tier covers about 8 hours a day."
+    }
+  },
+
   // Fixed text blocks
   blocks: {
     // Per-task execution approach. Each task gets its own variant.
