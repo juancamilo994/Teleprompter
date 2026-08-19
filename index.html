@@ -1885,6 +1885,245 @@
         return { text: text, engine: "groq-whisper", durationMs: capture.durationMs };
       }
 
+      // --- Voice input: extraction (Phase 5) ---
+
+      // Built at runtime from DATABASE, never hardcoded — adding a project
+      // type, doc, or MCP in database.js makes it dictatable with no edit here
+      // (AGENTS.md section 3). Groq strict mode requires additionalProperties:
+      // false and every key in `required`, which is why null (not an absent
+      // key) is the "not mentioned" sentinel.
+      function buildExtractionSchema() {
+        const nullableEnum = function (values) { return { type: ["string", "null"], enum: values.concat([null]) }; };
+        const nullableBool = function () { return { type: ["boolean", "null"] }; };
+        const nullableStr  = function () { return { type: ["string", "null"] }; };
+        const nullableInt  = function () { return { type: ["integer", "null"] }; };
+        const objOf = function (keys, make) {
+          return {
+            type: "object",
+            additionalProperties: false,
+            required: keys,
+            properties: keys.reduce(function (acc, k) { acc[k] = make(); return acc; }, {})
+          };
+        };
+
+        const docIds = DATABASE.baseDocs.map(function (d) { return d.id; });
+        const mcpIds = DATABASE.mcps.map(function (m) { return m.id; });
+        const auditKeys = Object.keys(DATABASE.auditTypes);
+
+        const properties = {
+          projectName:        nullableStr(),
+          projectDescription: nullableStr(),
+          projectType:        nullableEnum(DATABASE.projectTypes),
+          stack:               nullableEnum(DATABASE.stacks),
+          task:                nullableEnum(Object.keys(DATABASE.tasks)),
+          audit:               objOf(auditKeys, nullableBool),
+          sprintObjective:     nullableStr(),
+          phasedExecution:     nullableBool(),
+          totalPhases:         nullableInt(),
+          currentPhase:        nullableInt(),
+          phaseSpecPath:       nullableStr(),
+          docs:                objOf(docIds, nullableBool),
+          mcps:                objOf(mcpIds, nullableBool),
+          caveman:             nullableBool(),
+          unmatched:           { type: "array", items: { type: "string" } }
+        };
+
+        return {
+          type: "object",
+          additionalProperties: false,
+          required: Object.keys(properties),
+          properties: properties
+        };
+      }
+
+      // getState() -> patch shape, so the model sees current values in the same
+      // vocabulary as the schema it must fill. Keys are derived from DATABASE,
+      // never hardcoded (AGENTS.md section 3). Filtering instead of reshaping
+      // would silently drop every doc and every MCP, since no flat key like
+      // "mcpXcode" is a schema property — corrections to those fields would
+      // quietly stop working.
+      function stateToPatchShape(state) {
+        const out = {
+          projectName: state.projectName || null,
+          projectDescription: state.projectDescription || null,
+          projectType: state.projectType || null,
+          stack: state.stack || null,
+          task: state.task || null,
+          audit: {},
+          sprintObjective: state.sprintObjective || null,
+          phasedExecution: state.phasedExecution,
+          totalPhases: state.totalPhases,
+          currentPhase: state.currentPhase,
+          phaseSpecPath: state.phaseSpecPath || null,
+          docs: {},
+          mcps: {},
+          caveman: state.caveman
+        };
+        for (const k of Object.keys(DATABASE.auditTypes)) out.audit[k] = state.audit ? !!state.audit[k] : false;
+        for (const d of DATABASE.baseDocs) out.docs[d.id] = !!state[d.id];
+        for (const m of DATABASE.mcps) out.mcps[m.id] = !!state[mcpStateKey(m.id)];
+        return out;
+      }
+
+      function buildUserMessage(transcript, currentState) {
+        return "Current form values (only mention these to decide whether the speaker is correcting something):\n" +
+          JSON.stringify(stateToPatchShape(currentState)) +
+          "\n\nSpoken input:\n\"" + transcript + "\"";
+      }
+
+      async function extractWithGroq(transcript, currentState) {
+        const v = DATABASE.voice;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(function () { controller.abort(); }, 30000);
+        try {
+          const body = {
+            model: v.models.extraction,
+            temperature: 0,
+            messages: [
+              { role: "system", content: v.extractionSystemPrompt },
+              { role: "user", content: buildUserMessage(transcript, currentState) }
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "teleprompter_form_patch", strict: true, schema: buildExtractionSchema() }
+            }
+          };
+
+          let res;
+          try {
+            res = await voiceFetch(v.endpoints.chat, {
+              method: "POST",
+              headers: {
+                "Authorization": "Bearer " + keyVault.get(),
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(body),
+              signal: controller.signal
+            });
+          } catch (err) {
+            if (err && err.copyKey) throw err; // voiceFetch's own errorEndpoint — rethrow unchanged, already fatal
+            if (err && err.name === "AbortError") throw VoiceError("errorTimeout");
+            throw VoiceError("errorNetwork");
+          }
+
+          if (res.status === 200) {
+            const json = await res.json();
+            try {
+              return JSON.parse(json.choices[0].message.content);
+            } catch (e) {
+              // Strict mode guarantees schema-valid JSON, but a refusal or an
+              // outage can still return something else. There is no weaker
+              // engine to fall through to, so this must reach the user, not
+              // silently produce an empty patch.
+              const err = VoiceError("errorGeneric", "Groq returned unparseable JSON");
+              err.fatal = true;
+              throw err;
+            }
+          }
+          if (res.status === 401 || res.status === 403) throw VoiceError("errorBadKey");
+          if (res.status === 429) throw VoiceError("errorRateLimit");
+          if (res.status === 400) {
+            // A 400 here almost always means a rejected JSON schema or an
+            // unsupported model — a configuration bug, not a user-facing
+            // fluke. Must be loud: a fallback chain would have hidden this
+            // behind "voice input is just bad"; with one engine it surfaces
+            // immediately.
+            const errBody = await res.json().catch(function () { return {}; });
+            const message = errBody.error && errBody.error.message;
+            console.error("[voice] Groq 400:", res.status, message);
+            const err = VoiceError("errorGeneric", "Groq 400: " + message);
+            err.fatal = true;
+            throw err;
+          }
+          throw VoiceError("errorGeneric", "Groq " + res.status);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+
+      // The only guard between a misbehaving model and the user's form — there
+      // is no weaker engine behind it. Pure and synchronous; never throws.
+      function validatePatch(raw) {
+        const src = raw && typeof raw === "object" ? raw : {};
+        const docIds = DATABASE.baseDocs.map(function (d) { return d.id; });
+        const mcpIds = DATABASE.mcps.map(function (m) { return m.id; });
+        const auditKeys = Object.keys(DATABASE.auditTypes);
+        const taskKeys = Object.keys(DATABASE.tasks);
+        const localUnmatched = [];
+
+        function cleanStr(v) {
+          if (typeof v !== "string") return null;
+          const trimmed = stripTrailingDots(v.trim()).trim();
+          return trimmed === "" ? null : trimmed;
+        }
+        function cleanBool(v) {
+          return v === true ? true : v === false ? false : null;
+        }
+        function cleanEnum(v, allowed) {
+          if (typeof v !== "string") return null;
+          if (allowed.indexOf(v) !== -1) return v;
+          if (v.trim() !== "") localUnmatched.push(v.trim());
+          return null;
+        }
+        function cleanBoolMap(obj, keys) {
+          const source = obj && typeof obj === "object" ? obj : {};
+          const out = {};
+          for (const k of keys) out[k] = cleanBool(source[k]);
+          return out;
+        }
+        function cleanInt(v) {
+          const n = typeof v === "string" ? parseInt(v, 10) : v;
+          if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
+          return Math.trunc(n);
+        }
+
+        const totalPhases = cleanInt(src.totalPhases);
+        let currentPhase = cleanInt(src.currentPhase);
+        if (currentPhase !== null && totalPhases !== null && currentPhase > totalPhases) currentPhase = null;
+
+        const patch = {
+          projectName: cleanStr(src.projectName),
+          projectDescription: cleanStr(src.projectDescription),
+          projectType: cleanEnum(src.projectType, DATABASE.projectTypes),
+          stack: cleanEnum(src.stack, DATABASE.stacks),
+          task: cleanEnum(src.task, taskKeys),
+          audit: cleanBoolMap(src.audit, auditKeys),
+          sprintObjective: cleanStr(src.sprintObjective),
+          phasedExecution: cleanBool(src.phasedExecution),
+          totalPhases: totalPhases,
+          currentPhase: currentPhase,
+          phaseSpecPath: cleanStr(src.phaseSpecPath),
+          docs: cleanBoolMap(src.docs, docIds),
+          mcps: cleanBoolMap(src.mcps, mcpIds),
+          caveman: cleanBool(src.caveman),
+          unmatched: []
+        };
+
+        const rawUnmatched = Array.isArray(src.unmatched) ? src.unmatched : [];
+        const seen = new Set();
+        for (const item of rawUnmatched.concat(localUnmatched)) {
+          if (typeof item !== "string") continue;
+          const trimmed = item.trim();
+          if (trimmed === "") continue;
+          const key = trimmed.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          patch.unmatched.push(trimmed);
+          if (patch.unmatched.length >= 10) break;
+        }
+
+        return patch;
+      }
+
+      // The only extraction path. Every error from extractWithGroq propagates
+      // unchanged — no catch here that could swallow a credential, quota, or
+      // configuration failure behind a silent downgrade. See README section 3
+      // decision 1: with no weaker engine, that guarantee is structural.
+      async function extract(transcript, currentState) {
+        const patch = validatePatch(await extractWithGroq(transcript, currentState));
+        return { patch: patch, engine: "groq-gptoss" };
+      }
+
       // Stage-aware: a transcription that already succeeded must never be
       // re-uploaded (and re-billed) just because extraction later failed.
       async function retryLastVoiceStep() {
@@ -1916,10 +2155,20 @@
           voice.retryStage = "extraction";
           console.log("[voice] transcript (" + result.engine + "):", result.text);
           showTranscriptPreview(result.text); // TEMPORARY — replaced by the voice banner in phase 6.
-          setVoiceStatus("idle");
+          await completeExtraction(result.text);
         } catch (err) {
           setVoiceStatus("error", voiceErrorText(err));
         }
+      }
+
+      async function completeExtraction(transcript) {
+        setVoiceStatus("extracting");
+        const extraction = await extract(transcript, getState()); // { patch, engine }
+        console.log("[voice] patch (" + extraction.engine + "):", extraction.patch); // phase 6 applies it
+        voice.lastTranscript = "";
+        voice.retryStage = null;
+        voice.capReached = false;
+        setVoiceStatus("idle");
       }
 
       function initVoiceCapture() {
@@ -2013,6 +2262,22 @@
         }
 
         render();
+      }
+
+      // The one permitted global (README.md section 7.1), gated behind a query
+      // flag so nothing is exposed in normal use. Exposes only pure functions
+      // and redacted read-only state — never the retained Blob, transcript, or key.
+      if (/[?&]voicedebug\b/.test(location.search)) {
+        window.__voiceDebug = {
+          buildExtractionSchema: buildExtractionSchema,
+          validatePatch: validatePatch,
+          extract: extract,
+          retryLastVoiceStep: retryLastVoiceStep,
+          voiceStateShape: function () { return stateToPatchShape(getState()); },
+          voiceRetryState: function () {
+            return { stage: voice.retryStage, hasCapture: !!voice.lastCapture, hasTranscript: !!voice.lastTranscript };
+          }
+        };
       }
 
       if (document.readyState === "loading") {
