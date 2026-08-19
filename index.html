@@ -564,6 +564,9 @@
     <input type="file" id="openFile" accept="application/json,.json" hidden>
   </header>
 
+  <!-- TEMPORARY — replaced by the voice banner in phase 6. -->
+  <pre id="voiceTranscript" hidden></pre>
+
   <dialog id="voiceKeyDialog">
     <form method="dialog" id="voiceKeyForm">
       <h2 id="voiceKeyTitle"></h2>
@@ -731,7 +734,9 @@
         let origin;
         try { origin = new URL(url).origin; } catch (e) { origin = ""; }
         if (VOICE_ALLOWED_ORIGINS.indexOf(origin) === -1) {
-          return Promise.reject(VoiceError("errorEndpoint", origin || "invalid URL"));
+          const err = VoiceError("errorEndpoint", origin || "invalid URL");
+          err.fatal = true; // database.js was modified to point off-allowlist — not transient, do not retry
+          return Promise.reject(err);
         }
         return fetch(url, options);
       }
@@ -835,7 +840,10 @@
         analyser: null,
         rafId: null,
         silenceSince: 0,
-        capReached: false      // copied into the completed capture; cleared on a new recording
+        capReached: false,     // copied into the completed capture; cleared on a new recording
+        lastCapture: null,     // { blob, durationMs, mimeType, capReached } — memory only, retry input
+        lastTranscript: "",    // memory only; retained only after transcription succeeds
+        retryStage: null       // null | "transcription" | "extraction"
       };
 
       // The single branch in the whole pipeline (README section 5). Not verification —
@@ -1609,6 +1617,7 @@
         voice.silenceSince = 0;
         voice.capReached = false;
         voice.startedAt = 0;
+        clearRetainedVoice(); // a new recording invalidates any retry from a previous failure
       }
 
       function teardownVoiceStream() {
@@ -1793,11 +1802,124 @@
         });
       }
 
-      // Phase 4 replaces this body with the transcription call. Logging sizes
-      // and durations is fine; never log the blob contents or the key.
-      function onCaptureComplete(capture) {
-        console.log("[voice] capture complete", { bytes: capture.blob.size, ms: capture.durationMs, capReached: capture.capReached });
-        setVoiceStatus("idle");
+      // --- Voice input: transcription (Phase 4) ---
+
+      const RETRYABLE = ["errorTimeout", "errorNetwork", "errorRateLimit"];
+
+      // voice.lastCapture / voice.lastTranscript hold only what a retry of the
+      // current failure stage needs, never both at once. Cleared on final
+      // success, on a new recording (resetVoiceCapture), and on page hide.
+      function clearRetainedVoice() {
+        voice.lastCapture = null;
+        voice.lastTranscript = "";
+        voice.retryStage = null;
+      }
+
+      // Builds the text for DATABASE.voice.copy[err.copyKey], filling in
+      // whichever placeholder that string uses. Never renders err.message or
+      // a raw response body — only the copy-keyed string plus our own detail.
+      // Returns the text rather than writing #voiceStatus itself: setVoiceStatus
+      // is the sole writer of that element, and "error" has no default text of
+      // its own, so this must always be passed in as its detail argument.
+      function voiceErrorText(err) {
+        const copy = DATABASE.voice.copy;
+        const raw = copy[err.copyKey] || copy.errorGeneric;
+        const detail = err.detail || "";
+        return raw.replace("{message}", detail).replace("{seconds}", detail);
+      }
+
+      // TEMPORARY — replaced by the voice banner in phase 6.
+      function showTranscriptPreview(text) {
+        const el = document.getElementById("voiceTranscript");
+        el.textContent = text;
+        el.hidden = false;
+      }
+
+      async function transcribeWithGroq(blob, mimeType) {
+        const v = DATABASE.voice;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(function () { controller.abort(); }, 30000);
+        try {
+          const fd = new FormData();
+          const filename = mimeType === "audio/mp4" ? "dictation.mp4" : "dictation.webm";
+          fd.append("file", blob, filename);
+          fd.append("model", v.models.transcription);
+          fd.append("language", "en");
+          fd.append("temperature", "0");
+          fd.append("response_format", "json");
+          fd.append("prompt", v.vocabularyHint);
+
+          let res;
+          try {
+            res = await voiceFetch(v.endpoints.transcription, {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + keyVault.get() }, // no Content-Type: browser sets the multipart boundary
+              body: fd,
+              signal: controller.signal
+            });
+          } catch (err) {
+            if (err && err.copyKey) throw err; // voiceFetch's own errorEndpoint — rethrow unchanged, already fatal
+            if (err && err.name === "AbortError") throw VoiceError("errorTimeout");
+            throw VoiceError("errorNetwork");
+          }
+
+          if (res.status === 200) {
+            const json = await res.json();
+            const text = (json.text || "").trim();
+            if (!text) throw VoiceError("bannerNothing");
+            return text;
+          }
+          if (res.status === 401 || res.status === 403) throw VoiceError("errorBadKey");
+          if (res.status === 429) throw VoiceError("errorRateLimit");
+          if (res.status === 413) throw VoiceError("errorTooLarge", String(v.limits.maxSeconds));
+          throw VoiceError("errorGeneric", "Groq " + res.status);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+
+      // The only adapter. Kept as its own function — not because another engine
+      // is coming, but so the one call site that would ever change stays single.
+      async function transcribe(capture) {
+        const text = await transcribeWithGroq(capture.blob, capture.mimeType);
+        return { text: text, engine: "groq-whisper", durationMs: capture.durationMs };
+      }
+
+      // Stage-aware: a transcription that already succeeded must never be
+      // re-uploaded (and re-billed) just because extraction later failed.
+      async function retryLastVoiceStep() {
+        try {
+          if (voice.retryStage === "transcription" && voice.lastCapture) {
+            await onCaptureComplete(voice.lastCapture);
+            return;
+          }
+          if (voice.retryStage === "extraction" && voice.lastTranscript) {
+            await completeExtraction(voice.lastTranscript); // added in Phase 5, replaced in Phase 6
+          }
+        } catch (err) {
+          setVoiceStatus("error", voiceErrorText(err));
+        }
+      }
+
+      async function onCaptureComplete(capture) {
+        // handleRecordingStop already made the recording -> transcribing move
+        // (with the cap-reached notice, if any); only Retry re-enters from
+        // "error" and needs this call to make the transition itself.
+        if (voice.status !== "transcribing") setVoiceStatus("transcribing");
+        voice.lastCapture = capture;
+        voice.capReached = capture.capReached === true;
+        voice.retryStage = "transcription";
+        try {
+          const result = await transcribe(capture);
+          voice.lastTranscript = result.text; // kept in memory only, never persisted
+          voice.lastCapture = null;           // audio no longer needed once transcribed
+          voice.retryStage = "extraction";
+          console.log("[voice] transcript (" + result.engine + "):", result.text);
+          showTranscriptPreview(result.text); // TEMPORARY — replaced by the voice banner in phase 6.
+          setVoiceStatus("idle");
+        } catch (err) {
+          setVoiceStatus("error", voiceErrorText(err));
+        }
       }
 
       function initVoiceCapture() {
@@ -1832,12 +1954,14 @@
           } else if (voice.status === "requesting") {
             teardownVoiceStream(); // defensive: a stream may have just arrived
           }
+          clearRetainedVoice(); // audio/transcript in memory must not outlive the visible tab
         });
 
         window.addEventListener("pagehide", function () {
           stopVoiceTimer();
           stopVoiceLevelMeter();
           teardownVoiceStream();
+          clearRetainedVoice(); // audio/transcript in memory must not outlive the page
         });
       }
 
