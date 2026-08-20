@@ -153,7 +153,8 @@ const DATABASE = {
       "5. projectDescription is what the product IS. sprintObjective is what they want DONE this time. If the speaker only gives one of the two, fill that one and leave the other null.",
       "6. Do not include trailing periods in projectName, projectDescription, or sprintObjective. Do not add words the speaker did not say.",
       "7. totalPhases and currentPhase are integers. Only set phasedExecution to true if the speaker refers to phases, stages, or steps of a plan.",
-      "8. Transcription errors are common with technical terms. \"next JS\", \"next js app\", \"nextjs\" all mean the Next.js option. Map obvious phonetic variants to the correct allowed value; if you are not confident, leave null and add the raw term to unmatched."
+      "8. Transcription errors are common with technical terms. \"next JS\", \"next js app\", \"nextjs\" all mean the Next.js option. Map obvious phonetic variants to the correct allowed value; if you are not confident, leave null and add the raw term to unmatched.",
+      "9. audit, docs, and mcps are objects, never null themselves — but every key inside them still follows rule 1 independently: set a key's value only if the speaker specifically named that exact document, MCP, or audit type; leave every other key in that same object null, even when one sibling key was just set. Naming one document or MCP is not evidence about the others. If the speaker said nothing at all about documents, MCPs, or audit types, return the object with every key null (for example docs: {hasReadme: null, agentsDoc: null, ...}) rather than docs: null itself."
     ].join("\n"),
 
     // User-facing copy. {slots} are filled by index.html.

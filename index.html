@@ -59,6 +59,10 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    /* Placeholder only — phase 7 gives this its real look. */
+    .voice-filled {
+      outline: 2px solid #2563EB;
+    }
 
     /* Dual-screen layout */
     #dualContainer {
@@ -564,9 +568,6 @@
     <input type="file" id="openFile" accept="application/json,.json" hidden>
   </header>
 
-  <!-- TEMPORARY — replaced by the voice banner in phase 6. -->
-  <pre id="voiceTranscript" hidden></pre>
-
   <dialog id="voiceKeyDialog">
     <form method="dialog" id="voiceKeyForm">
       <h2 id="voiceKeyTitle"></h2>
@@ -587,6 +588,13 @@
   </dialog>
 
   <p id="templateWarning" hidden></p>
+
+  <div id="voiceBanner" role="status" aria-live="polite" hidden>
+    <p id="voiceBannerText"></p>
+    <button type="button" id="voiceRetryBtn" hidden></button>
+    <button type="button" id="voiceUndoBtn"></button>
+    <button type="button" id="voiceBannerClose" aria-label="Dismiss">×</button>
+  </div>
 
   <div id="dualContainer">
   <div id="leftPanel">
@@ -813,6 +821,11 @@
       const voiceStatusEl = document.getElementById("voiceStatus");
       const voiceLevelEl = document.getElementById("voiceLevel");
       const voiceLevelFill = voiceLevelEl.querySelector("i");
+      const voiceBannerEl = document.getElementById("voiceBanner");
+      const voiceBannerTextEl = document.getElementById("voiceBannerText");
+      const voiceRetryBtn = document.getElementById("voiceRetryBtn");
+      const voiceUndoBtn = document.getElementById("voiceUndoBtn");
+      const voiceBannerCloseBtn = document.getElementById("voiceBannerClose");
 
       // idle -> requesting is the only entry point. error keeps two extra
       // outbound edges (-> transcribing, -> extracting) purely so a later
@@ -843,7 +856,8 @@
         capReached: false,     // copied into the completed capture; cleared on a new recording
         lastCapture: null,     // { blob, durationMs, mimeType, capReached } — memory only, retry input
         lastTranscript: "",    // memory only; retained only after transcription succeeds
-        retryStage: null       // null | "transcription" | "extraction"
+        retryStage: null,      // null | "transcription" | "extraction"
+        snapshot: null         // pre-patch getState(), memory only — single-level undo
       };
 
       // The single branch in the whole pipeline (README section 5). Not verification —
@@ -1618,6 +1632,7 @@
         voice.capReached = false;
         voice.startedAt = 0;
         clearRetainedVoice(); // a new recording invalidates any retry from a previous failure
+        hideVoiceBanner();    // banner auto-clears on the next dictation
       }
 
       function teardownVoiceStream() {
@@ -1826,13 +1841,6 @@
         const raw = copy[err.copyKey] || copy.errorGeneric;
         const detail = err.detail || "";
         return raw.replace("{message}", detail).replace("{seconds}", detail);
-      }
-
-      // TEMPORARY — replaced by the voice banner in phase 6.
-      function showTranscriptPreview(text) {
-        const el = document.getElementById("voiceTranscript");
-        el.textContent = text;
-        el.hidden = false;
       }
 
       async function transcribeWithGroq(blob, mimeType) {
@@ -2124,6 +2132,183 @@
         return { patch: patch, engine: "groq-gptoss" };
       }
 
+      // --- Voice input: apply patch, banner, undo (Phase 6) ---
+
+      // The patch is not the canonical state (README.md section 6 vs AGENTS.md
+      // section 4) — convert, dropping every null so "not mentioned" can never
+      // mean "cleared".
+      function patchToStateDelta(patch) {
+        const delta = {};
+        const put = function (k, v) { if (v !== null && v !== undefined) delta[k] = v; };
+
+        put("projectName", patch.projectName);
+        put("projectDescription", patch.projectDescription);
+        put("projectType", patch.projectType);
+        put("stack", patch.stack);
+        put("task", patch.task);
+        put("sprintObjective", patch.sprintObjective);
+        put("phasedExecution", patch.phasedExecution);
+        put("totalPhases", patch.totalPhases);
+        put("currentPhase", patch.currentPhase);
+        put("phaseSpecPath", patch.phaseSpecPath);
+        put("caveman", patch.caveman);
+
+        const auditDelta = {};
+        for (const k of Object.keys(DATABASE.auditTypes)) {
+          if (patch.audit && patch.audit[k] !== null && patch.audit[k] !== undefined) auditDelta[k] = patch.audit[k];
+        }
+        if (Object.keys(auditDelta).length) delta.audit = auditDelta;
+
+        for (const doc of DATABASE.baseDocs) {
+          if (patch.docs && patch.docs[doc.id] !== null && patch.docs[doc.id] !== undefined) put(doc.id, patch.docs[doc.id]);
+        }
+        for (const mcp of DATABASE.mcps) {
+          if (patch.mcps && patch.mcps[mcp.id] !== null && patch.mcps[mcp.id] !== undefined) put(mcpStateKey(mcp.id), patch.mcps[mcp.id]);
+        }
+        return delta;
+      }
+
+      // Reuses applyState rather than writing a second form-writer, so template
+      // import and voice input behave identically and there is one place to
+      // fix bugs. Snapshot is taken before writing, in memory only.
+      function applyVoicePatch(patch) {
+        const delta = patchToStateDelta(patch);
+        const changed = Object.keys(delta);
+        if (!changed.length) return { changedCount: 0, changedKeys: [] };
+
+        voice.snapshot = getState(); // single-level undo, in memory only
+        const merged = Object.assign({}, getState(), delta);
+        if (delta.audit) merged.audit = Object.assign({}, getState().audit, delta.audit);
+
+        applyState(merged); // reuse the importer: validation + refreshVisibility for free
+        markVoiceFilled(changed);
+        voiceUndoBtn.disabled = false; // a snapshot now exists; button must reflect that
+                                        // even when this is called directly (debug hook),
+                                        // not only via the showVoiceBanner path.
+        render();
+        return { changedCount: changed.length, changedKeys: changed };
+      }
+
+      function undoVoice() {
+        if (!voice.snapshot) return;
+        applyState(voice.snapshot);
+        voice.snapshot = null;
+        voiceUndoBtn.disabled = true;
+        clearVoiceFilled();
+        hideVoiceBanner();
+        render();
+      }
+
+      // Returns the element to highlight for a state key, or null.
+      // form.elements[key] resolves most fields, but task (button group, no
+      // control), audit (shared name="audit", a RadioNodeList), and MCPs
+      // (element name "mcp-<id>" != state key) all need explicit handling.
+      function voiceFieldElement(key) {
+        if (key === "task") {
+          return selectedTask ? taskGroup.querySelector('[data-task="' + selectedTask + '"]') : taskGroup;
+        }
+        if (key === "audit") {
+          return auditOptions; // all three checkboxes share name="audit"; highlight the group
+        }
+        const mcp = DATABASE.mcps.find(function (m) { return mcpStateKey(m.id) === key; });
+        if (mcp) return form.elements["mcp-" + mcp.id];
+        const el = form.elements[key];
+        return el && el.tagName ? el : null; // guards against a RadioNodeList
+      }
+
+      // The nearest element worth outlining. .row exists for the top-level form
+      // rows but NOT for the generated doc/MCP/skill checkboxes (bare <div>
+      // wrappers with no class), so fall back to those wrappers before falling
+      // back to the control itself — a bare 16px checkbox outline would be
+      // technically highlighted but visually nothing.
+      function voiceHighlightTarget(el) {
+        if (!el || !el.closest) return el || null;
+        // Task buttons share one .row with all four task buttons (README.md
+        // section 10.1: "highlight it on the button" — singular). Falling
+        // through to closest(".row") first would outline the whole group
+        // instead of the one button that changed, so resolve this case before
+        // the generic .row fallback.
+        if (el.hasAttribute && el.hasAttribute("data-task")) return el;
+        return el.closest(".row") ||
+               el.closest("#docsGroup > div, #mcpsGroup > div, #skillsGroup > div") ||
+               el;
+      }
+
+      function markVoiceFilled(changedKeys) {
+        for (const key of changedKeys) {
+          const target = voiceHighlightTarget(voiceFieldElement(key));
+          if (target) target.classList.add("voice-filled");
+        }
+      }
+
+      function clearVoiceFilled() {
+        for (const el of form.querySelectorAll(".voice-filled")) el.classList.remove("voice-filled");
+      }
+
+      function voiceRetryEligible(err) {
+        if (!err || RETRYABLE.indexOf(err.copyKey) === -1) return false;
+        if (voice.retryStage === "transcription") return !!voice.lastCapture;
+        if (voice.retryStage === "extraction") return !!voice.lastTranscript;
+        return false;
+      }
+
+      function setVoiceBannerButtons(retryEligible) {
+        voiceRetryBtn.hidden = !retryEligible;
+        voiceUndoBtn.disabled = !voice.snapshot;
+      }
+
+      function hideVoiceBanner() {
+        voiceBannerEl.hidden = true;
+        voiceBannerTextEl.textContent = "";
+        voiceRetryBtn.hidden = true;
+      }
+
+      // Cap notice renders in the warning style alongside the normal
+      // applied/unmatched text, not instead of it — the truncated dictation
+      // still filled fields; the notice explains why the end is missing.
+      function showVoiceBanner(applied, unmatched, engine, opts) {
+        const copy = DATABASE.voice.copy;
+        const capReached = !!(opts && opts.capReached);
+        const unmatchedList = Array.isArray(unmatched) ? unmatched : [];
+        const parts = [];
+        if (capReached) parts.push(copy.noticeCapReached.replace("{seconds}", String(DATABASE.voice.limits.maxSeconds)));
+        if (applied.changedCount > 0) parts.push(copy.bannerApplied.replace("{count}", String(applied.changedCount)));
+        if (unmatchedList.length) parts.push(copy.bannerUnmatched.replace("{terms}", joinDocs(unmatchedList)));
+        if (applied.changedCount === 0 && unmatchedList.length === 0 && !capReached) parts.push(copy.bannerNothing);
+
+        voiceBannerTextEl.textContent = parts.join(" ");
+        voiceBannerEl.classList.toggle("warn", capReached); // placeholder hook; Phase 7 styles it
+        voiceBannerEl.hidden = false;
+        setVoiceBannerButtons(false); // success: never offer retry
+      }
+
+      function showVoiceError(err) {
+        voiceBannerTextEl.textContent = voiceErrorText(err);
+        voiceBannerEl.classList.add("warn"); // placeholder hook; Phase 7 styles it
+        voiceBannerEl.hidden = false;
+        setVoiceBannerButtons(voiceRetryEligible(err));
+      }
+
+      function initVoiceBanner() {
+        voiceRetryBtn.textContent = DATABASE.voice.copy.retryLabel;
+        voiceUndoBtn.textContent = DATABASE.voice.copy.undoLabel;
+        voiceUndoBtn.disabled = true;
+        voiceRetryBtn.addEventListener("click", retryLastVoiceStep);
+        voiceUndoBtn.addEventListener("click", undoVoice);
+        voiceBannerCloseBtn.addEventListener("click", hideVoiceBanner);
+
+        // A voice-filled field loses its highlight the moment the user
+        // touches it by hand — input covers text/number fields, change
+        // covers checkboxes, click covers the task button group.
+        const clearOnEdit = function (e) {
+          const el = e.target.closest(".voice-filled");
+          if (el) el.classList.remove("voice-filled");
+        };
+        form.addEventListener("input", clearOnEdit);
+        form.addEventListener("change", clearOnEdit);
+        form.addEventListener("click", clearOnEdit);
+      }
+
       // Stage-aware: a transcription that already succeeded must never be
       // re-uploaded (and re-billed) just because extraction later failed.
       async function retryLastVoiceStep() {
@@ -2133,10 +2318,11 @@
             return;
           }
           if (voice.retryStage === "extraction" && voice.lastTranscript) {
-            await completeExtraction(voice.lastTranscript); // added in Phase 5, replaced in Phase 6
+            await completeExtraction(voice.lastTranscript);
           }
         } catch (err) {
-          setVoiceStatus("error", voiceErrorText(err));
+          showVoiceError(err);
+          setVoiceStatus("error");
         }
       }
 
@@ -2154,17 +2340,21 @@
           voice.lastCapture = null;           // audio no longer needed once transcribed
           voice.retryStage = "extraction";
           console.log("[voice] transcript (" + result.engine + "):", result.text);
-          showTranscriptPreview(result.text); // TEMPORARY — replaced by the voice banner in phase 6.
           await completeExtraction(result.text);
         } catch (err) {
-          setVoiceStatus("error", voiceErrorText(err));
+          showVoiceError(err);
+          setVoiceStatus("error"); // form is untouched: nothing was applied
         }
       }
 
       async function completeExtraction(transcript) {
         setVoiceStatus("extracting");
         const extraction = await extract(transcript, getState()); // { patch, engine }
-        console.log("[voice] patch (" + extraction.engine + "):", extraction.patch); // phase 6 applies it
+
+        const applied = applyVoicePatch(extraction.patch); // { changedCount, changedKeys }
+        showVoiceBanner(applied, extraction.patch.unmatched, extraction.engine, {
+          capReached: voice.capReached === true
+        });
         voice.lastTranscript = "";
         voice.retryStage = null;
         voice.capReached = false;
@@ -2228,6 +2418,7 @@
         buildMcpsGroup();
         initVoiceKeyVault();
         initVoiceCapture();
+        initVoiceBanner();
 
         form.elements.phasedExecution.addEventListener("change", function () {
           refreshVisibility();
@@ -2272,6 +2463,8 @@
           buildExtractionSchema: buildExtractionSchema,
           validatePatch: validatePatch,
           extract: extract,
+          patchToStateDelta: patchToStateDelta,
+          applyVoicePatch: applyVoicePatch,
           retryLastVoiceStep: retryLastVoiceStep,
           voiceStateShape: function () { return stateToPatchShape(getState()); },
           voiceRetryState: function () {
