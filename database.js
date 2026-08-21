@@ -184,12 +184,12 @@ const DATABASE = {
       errorRateLimit:     "Groq rate limit hit. Wait a moment and try again.",
       errorGeneric:       "Voice input failed: {message}",
       keyDialogTitle:     "Voice settings",
-      keyDialogIntro:     "Dictation uses your own Groq API key. A free account needs no credit card and covers roughly 100 dictations a day. The key is stored only in this browser (localStorage) and is sent only to api.groq.com. It is never included in exported templates.",
+      keyDialogIntro:     "Dictation uses your own free Groq API key (no credit card required) — good for ~100 dictations or 8 hours of audio a day. Stored only in this browser and sent only to api.groq.com; never included in exported templates. Get a key at console.groq.com/keys.",
       keyDialogWarning:   "Anything with access to this page can read a key stored in your browser, including a modified database.js. Only use a key you can rotate, and never load a database.js you do not trust.",
       keyDialogPlaceholder: "gsk_…",
       keyDialogSave:      "Save key",
+      keyDialogVerify:    "Verify existing key",
       keyDialogForget:    "Forget key",
-      keyDialogGetKey:    "Get a free key at console.groq.com/keys — no credit card needed",
       // Usage, not dollars. Most users are on the free tier and owe nothing, so
       // a "$0.0013" readout would be false. {seconds} is the recorded length.
       usageEstimate:      "{seconds}s of audio. The free Groq tier covers about 8 hours a day."
