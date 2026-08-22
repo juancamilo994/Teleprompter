@@ -71,6 +71,45 @@ All notable changes to Teleprompter are logged here, newest first. Use this file
 
 <!-- NEW ENTRIES ABOVE THIS LINE -->
 
+## 2026-08-21 — Voice input
+
+### Added
+
+- **Dictation.** A microphone button in the header records a free-form description of the project and fills the form from it. Two steps, one engine each: transcription via Groq `whisper-large-v3-turbo`, extraction via Groq `openai/gpt-oss-20b` with strict constrained JSON. Requires the user's own Groq API key — free, no credit card, roughly 100 dictations a day at no cost. Without a key the mic button is disabled and links to the settings dialog; there is no fallback engine and therefore no way to get a quietly worse result. Works from `file://` with no server.
+- **Correction by voice.** A second dictation patches only the fields mentioned; everything else is left alone, so "actually make it a debug task" edits one field instead of restarting.
+- **Unsupported-value reporting.** Technologies Teleprompter does not model (C++, Rust, Django…) are never coerced into a supported option. The field is left untouched and the banner names what was heard.
+- **Single-level undo** for the last dictation, plus a review highlight on voice-filled fields that clears when the user edits them.
+- **`DATABASE.voice`** content block: model IDs, endpoints, recording limits, Whisper vocabulary hint, extraction system prompt, and all user-facing copy.
+- **`?voicedebug`** query flag exposing pure voice functions on `window.__voiceDebug` for manual testing.
+
+### Fixed
+
+- **Mic button was unclickable in the no-key state.** `refreshMicAvailability()` set the native `disabled` attribute whenever no key was saved, which made the browser suppress all `click` events on the button — including the click handler's own "no key → open Voice settings" branch, which was correct but unreachable. Onboarding users landed on a mic button that visually explained the problem but did nothing when clicked. Fixed by driving native `disabled` off the busy (transcribing/extracting) state only; the no-key state now stays clickable and correctly opens Voice settings. Found during Phase 8 manual testing (automated pre-check, reproduced live by the owner in Safari) and fixed in the same pass.
+- **Extraction could return truncated, schema-invalid JSON.** `openai/gpt-oss-20b` spends tokens on a hidden reasoning trace before the JSON; with neither `reasoning_effort` nor `max_completion_tokens` set, Groq's default completion budget could run out mid-JSON, cutting off exactly the schema's trailing properties (observed live: a dictation correction failed with a Groq 400 for missing `caveman`/`unmatched`). Fixed by setting `reasoning_effort: "low"` (this is a straightforward extraction task, not one that benefits from heavy reasoning) and a generous explicit `max_completion_tokens` on the extraction request.
+- **`unmatched` could be returned as `null` instead of `[]`, another schema-validation 400.** None of the extraction prompt's rules told the model that `unmatched` (unlike every other field) is never nullable — it must always be an array. Added rule 10 to `extractionSystemPrompt` in `database.js`, mirroring the existing rule 9 pattern for `audit`/`docs`/`mcps`.
+- **A schema-validation 400 wasn't retryable**, forcing the user to redo the whole dictation on what is often a transient decoding hiccup rather than a permanent failure. `errorGeneric` (covers Groq 400s, unparseable JSON, and the unknown-status catch-all) added to the `RETRYABLE` list, alongside the existing network/timeout/rate-limit cases — the capture/transcript is retained either way, so retrying is safe.
+- **Voice-filled highlight could fire on a field that didn't actually change.** `applyVoicePatch` counted a field as "changed" whenever the model returned any non-null value for it, even if that value happened to already match the current state (observed live: `stack` highlighted, unprompted, with its pre-dictation value). The review highlight and the banner's field count now compare against the current state and only flag genuine differences.
+- **Voice-filled highlights from an earlier dictation never cleared on a later one.** Each correction added its own highlights on top of every prior round's, instead of replacing them — so after a second dictation, the one real change from that round was easy to miss sitting among a growing pile of stale highlights from the first (observed live: after a correction, the field it actually changed appeared no different from the untouched fields still lit from the original dictation). `applyVoicePatch` now clears the previous highlight set before marking the new one; a dictation that changes nothing leaves the existing highlights alone rather than wiping them for no reason.
+- **Approaching the recording limit gave no textual warning.** Past the 100s warn threshold, only the status color and level-meter fill turned amber — the status text kept reading "Listening — Ns" with no indication anything had changed, which said nothing to a screen reader and made a sighted user do the 120-minus-N math themselves. New `statusRecordingWarn` copy ("Listening — {seconds}s. Stopping in {remaining}s.") replaces the plain status text once the warn threshold is reached, matching the explicit-numbers style already used for the hard-cap notice.
+
+### Security
+
+- The Groq API key is stored only in the user's browser (`localStorage`), masked in the UI, verified against Groq's `/models` endpoint, and removable in one click. It is never included in exported templates, never written to the canonical state or the state dump, and never logged. Imported templates cannot inject one: `applyState` reads a fixed allowlist of known state keys and ignores everything else, and it additionally drops credential-shaped keys as a tripwire against future refactors.
+- Requests carrying the key go through `voiceFetch()`, which refuses any origin outside an allowlist hardcoded in `index.html`, so the endpoints in `database.js` cannot be edited to redirect the credential.
+- A key rejected with 401 is kept and flagged unverified rather than deleted, so a transient auth failure cannot silently discard something the user pasted.
+- Documented residual risk, stated plainly rather than papered over: `database.js` is executable JavaScript loaded into the page, so a modified one can read `localStorage` directly regardless of the endpoint allowlist. Only load a `database.js` you trust, and use a key you can rotate. The key dialog says this and `README.md` repeats it.
+
+### Changed (docs)
+
+- `AGENTS.md` §1 gains four decisions (voice is optional and has no fallback engine; LLMs propose input, never generate prompts; voice works on `file://`; credentials are pinned in code, not data), plus updates to §2, §3, §4, §6, §7, and §9.
+
+### Not changed
+
+- `DATABASE.version` stays `1.4.0`: prompt output and template compatibility are unaffected.
+- `generatePrompt()` and the canonical state shape are untouched.
+
+A manual test guide lives at `docs/voice-input/MANUAL-TESTS.md` (not committed — `docs/` is git-ignored).
+
 ## 2026-07-03 — Audit ship-now fixes (dbVersion 1.2.0)
 
 ### Fixed

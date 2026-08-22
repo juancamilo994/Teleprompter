@@ -569,7 +569,7 @@
     }
     /* No-key onboarding state: pairs with the settings-button badge below
        rather than reading as a dead/broken control (README.md phase-7 §5). */
-    #actionBar:has(#voiceSettingsBtn[data-key-state="none"]) #micBtn:disabled {
+    #actionBar:has(#voiceSettingsBtn[data-key-state="none"]) #micBtn {
       opacity: 1;
       border-color: #2563EB;
       color: #2563EB;
@@ -580,7 +580,7 @@
        This selector is a strict specificity superset of the one above so it
        always wins when both match — "a user must never wonder whether the
        mic is live" (phase-7 §5) outranks the onboarding hint. */
-    body[data-voice-status="recording"] #actionBar:has(#voiceSettingsBtn[data-key-state="none"]) #micBtn:disabled {
+    body[data-voice-status="recording"] #actionBar:has(#voiceSettingsBtn[data-key-state="none"]) #micBtn {
       border-color: #DC2626;
       color: #DC2626;
     }
@@ -1293,7 +1293,13 @@
       // right now", not two that can disagree.
       function refreshMicAvailability() {
         const busy = voice.status === "transcribing" || voice.status === "extracting";
-        micBtn.disabled = busy || !keyVault.has();
+        // Native disabled reflects "busy" only. A missing key must NOT make
+        // this natively disabled: a disabled button never dispatches click
+        // events (not even a scripted .click()), which would make the click
+        // handler's "no key -> open Voice settings" branch unreachable dead
+        // code. Same reasoning covers Stop: if the key is forgotten mid
+        // recording, the button must still be clickable to stop it.
+        micBtn.disabled = busy;
         micBtn.title = keyVault.has() ? "" : DATABASE.voice.copy.errorNoKey;
       }
 
@@ -2083,11 +2089,16 @@
           if (voice.status !== "recording") { stopVoiceTimer(); return; }
           const limits = DATABASE.voice.limits;
           const seconds = voiceElapsedSeconds();
-          voiceStatusEl.textContent = DATABASE.voice.copy.statusRecording.replace("{seconds}", String(seconds));
-          voiceStatusEl.hidden = false;
           if (seconds >= limits.warnSeconds) {
             document.body.dataset.voiceWarn = "1";
+            const remaining = Math.max(0, limits.maxSeconds - seconds);
+            voiceStatusEl.textContent = DATABASE.voice.copy.statusRecordingWarn
+              .replace("{seconds}", String(seconds))
+              .replace("{remaining}", String(remaining));
+          } else {
+            voiceStatusEl.textContent = DATABASE.voice.copy.statusRecording.replace("{seconds}", String(seconds));
           }
+          voiceStatusEl.hidden = false;
           if (seconds >= limits.maxSeconds) {
             voice.capReached = true;
             stopRecording();
@@ -2249,7 +2260,13 @@
 
       // --- Voice input: transcription (Phase 4) ---
 
-      const RETRYABLE = ["errorTimeout", "errorNetwork", "errorRateLimit"];
+      // errorGeneric covers a Groq 400 (rejected schema, e.g. a stochastic
+      // decoding miss under strict mode), unparseable JSON, and the unknown-
+      // status catch-all — retrying the same request is safe and often
+      // succeeds (the capture/transcript is retained either way), so it is
+      // retryable like the network-flavored errors rather than forcing the
+      // user to redo the whole dictation.
+      const RETRYABLE = ["errorTimeout", "errorNetwork", "errorRateLimit", "errorGeneric"];
 
       // voice.lastCapture / voice.lastTranscript hold only what a retry of the
       // current failure stage needs, never both at once. Cleared on final
@@ -2417,6 +2434,17 @@
           const body = {
             model: v.models.extraction,
             temperature: 0,
+            // gpt-oss-20b is a reasoning model: it spends tokens on a hidden
+            // chain-of-thought before the JSON. With neither of these set,
+            // Groq's default completion budget can run out mid-JSON, which
+            // truncates exactly the schema's trailing properties (observed:
+            // 'caveman'/'unmatched' missing from a 400 response). This is a
+            // straightforward extraction task, not one that benefits from
+            // heavy reasoning, so effort is capped low; max_completion_tokens
+            // is set generously above what a full schema response needs so a
+            // full JSON body always fits regardless.
+            reasoning_effort: "low",
+            max_completion_tokens: 2048,
             messages: [
               { role: "system", content: v.extractionSystemPrompt },
               { role: "user", content: buildUserMessage(transcript, currentState) }
@@ -2603,14 +2631,37 @@
       // fix bugs. Snapshot is taken before writing, in memory only.
       function applyVoicePatch(patch) {
         const delta = patchToStateDelta(patch);
-        const changed = Object.keys(delta);
+        const current = getState();
+        // "Changed" (for the review highlight and the banner's field count)
+        // means the value actually differs from current state — not merely
+        // that the model returned a non-null value for the key. The model
+        // can return a value for a field it was not asked about that
+        // happens to already match the current selection (observed live:
+        // stack highlighted with its pre-dictation value, unprompted); a
+        // highlight that fires without a real change stops meaning "this is
+        // what changed" and misleads the review step it exists for.
+        const changed = Object.keys(delta).filter(function (k) {
+          if (k === "audit") {
+            return Object.keys(delta.audit).some(function (ak) { return delta.audit[ak] !== current.audit[ak]; });
+          }
+          return delta[k] !== current[k];
+        });
         if (!changed.length) return { changedCount: 0, changedKeys: [] };
 
-        voice.snapshot = getState(); // single-level undo, in memory only
-        const merged = Object.assign({}, getState(), delta);
-        if (delta.audit) merged.audit = Object.assign({}, getState().audit, delta.audit);
+        voice.snapshot = current; // single-level undo, in memory only
+        const merged = Object.assign({}, current, delta);
+        if (delta.audit) merged.audit = Object.assign({}, current.audit, delta.audit);
 
         applyState(merged); // reuse the importer: validation + refreshVisibility for free
+        // Each dictation's highlight set replaces the previous one rather
+        // than accumulating on top of it: the highlight means "this is what
+        // THIS round changed," and a growing pile of old highlights buries
+        // that signal (observed live: a correction's one real change was
+        // easy to miss sitting among every earlier round's still-lit
+        // fields). A completely no-op round (the early return above) leaves
+        // the prior highlights alone instead — nothing new happened, so
+        // there is nothing to replace them with.
+        clearVoiceFilled();
         markVoiceFilled(changed);
         voiceUndoBtn.disabled = false; // a snapshot now exists; button must reflect that
                                         // even when this is called directly (debug hook),

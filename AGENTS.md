@@ -44,6 +44,10 @@ Teleprompter is a **single static HTML page** (`index.html`) that loads a **data
 8. **Caveman skill is a toggle, default on.** Reflects the user's global preference. The checkbox is checked by default in HTML (`checked` attribute) and in the canonical state (`caveman: true`). Unchecking removes the "Use caveman skill." line from the generated prompt.
 9. **Context7 is an MCP entry, checked by default.** Lives in `DATABASE.mcps` like any other MCP (`{ id: "context7", ..., default: true }`), rendered as a checkbox in External connections. `default: true` on an MCP entry means `buildMcpsGroup()` checks it on load; users can still uncheck it. Rationale: AI agents trained on older data give deprecated instructions; Context7 helps avoid that, but it's now a toggle like the rest.
 10. **Logo is an inline `<svg>`.** The logo is inlined directly in `index.html` as an `<svg>` element (white paths on transparent, viewBox `0 0 6428 1500`), sourced from `LogoSVG.svg`. No external image file is loaded — works with `file://` with no missing-asset 404s. CSS selector `header img, header svg` constrains it to `height: 56px; width: auto; flex-shrink: 0;`. The `LogoWhite.png` file is no longer referenced and may be deleted.
+11. **Voice input is an optional input layer, never a dependency.** A microphone button in the header dictates form state. Every field remains typeable and the app is fully usable with the feature untouched — dictation requires a Groq API key, and without one the mic button is disabled and says so. There is deliberately **no fallback engine**: a second, weaker path would return different answers for the same sentence depending on invisible state, which is the silent-downgrade failure this codebase rejects everywhere else. Unavailable and explained beats available and quietly worse.
+12. **LLMs may propose form state; they never generate prompts.** Speech is transcribed and mapped into the canonical state object by an external or on-device model, and the user reviews the result in the form. `generatePrompt()` remains a pure, deterministic function of state — no model output ever reaches the prompt string except by first becoming an ordinary form value the user can see and edit. Determinism of the *output* is preserved; only the *input* is inferred.
+13. **Voice runs on `file://`.** Verified on Chrome 151 (2026-08-08): `getUserMedia`, `MediaRecorder`, and `fetch` to `api.groq.com` (which reflects `Origin: null`) all work from a double-clicked `index.html`. No server, no localhost requirement. Do not introduce one. This is a *no-server* guarantee, not an offline one — dictation calls a cloud API and needs an internet connection.
+14. **Credentials are pinned in code, not in data.** `DATABASE.voice.endpoints` is editable content like everything else in `database.js`, so the API key is only ever attached by `voiceFetch()`, which rejects any origin outside an allowlist hardcoded in `index.html`. Editing the database cannot redirect a credential. This does not make an untrusted `database.js` safe — it runs as a `<script>` and can read `localStorage` directly — it removes one avenue and keeps the documented guarantee honest.
 
 ---
 
@@ -59,6 +63,8 @@ No dependencies. No `package.json`. No `node_modules`. No framework.
 | Data | `database.js` | `DATABASE.version` | `const` object, loaded via `<script src>` |
 | Fonts | System + Inter | — | `'Inter', -apple-system, BlinkMacSystemFont, ...` |
 | Logo | inline `<svg>` | viewBox 6428×1500 | White paths on transparent, inlined in `index.html` (sourced from `LogoSVG.svg`) |
+| Speech capture | MediaRecorder | — | Browser-native, no dependency |
+| Voice STT+extraction | Groq API (BYOK) | whisper-large-v3-turbo, openai/gpt-oss-20b | User's own key, browser-direct, no proxy, no fallback engine |
 
 **Runtime:** any modern browser. Open `index.html` directly. No server required.
 
@@ -81,6 +87,7 @@ Everything a user might want to edit without touching app logic:
 - MCP phrases (`mcps[].phrase`)
 - Base-doc filenames (`baseDocs[].phrase`)
 - Project-type-specific approach bullets (`projectTypeApproach`)
+- Voice content (`DATABASE.voice`: model IDs, endpoints, recording limits, vocabulary hint, extraction system prompt, user-facing copy)
 
 ### `index.html` — grammar (the "how")
 
@@ -91,6 +98,9 @@ Everything structural that should NOT change when content changes:
 - Formatting: `"- "` bullet prefix, `"1. "` numbering, `"\n\n"` section separation
 - Fallback strings: `"none specified."`, `"Tasks: (select a task type)"`, `"to be defined"`, `"You're a developer"` (neutral role when task=null and name empty)
 - All DOM structure, CSS, event wiring, state management, export/import logic, clipboard logic
+- All voice logic: key vault, capture, transcription, extraction, patch validation and merge, banner and undo
+
+The extraction JSON schema derives its enums from `DATABASE` at runtime, and the current form state is reshaped into the same vocabulary before being sent to the model — so the "adding a doc or MCP is database-only" rule below extends to voice, dictation and correction alike.
 
 ### Adding entries (docs/MCPs) — database-only
 
@@ -133,6 +143,8 @@ Adding a base doc or an MCP requires ONLY a `database.js` entry — no `index.ht
 }
 ```
 
+The canonical state is **unchanged** by voice. Voice-only values (API key, last transcript, undo snapshot, engine, status) are module-scoped inside the IIFE and are deliberately absent from `getState()`, `#stateDump`, and exported templates.
+
 ---
 
 ## 5. Prompt assembly order
@@ -171,6 +183,7 @@ Sections separated by `"\n\n"`. Single trailing newline. No trailing whitespace.
 - `dbVersion` mismatch → warning shown, form still loads.
 - Unknown state keys → ignored silently.
 - Missing state keys → current value preserved.
+- Templates never contain credentials; `applyState` strips credential-shaped keys from imported files.
 
 ---
 
@@ -198,6 +211,8 @@ Headless alternative (no browser, no scratch file): `require("./database.js")` d
 ```bash
 node -e 'const D=new Function(require("fs").readFileSync("./database.js","utf8")+";return DATABASE;")();console.log(D.version, D.rolePhrase("Next.js","Full stack","plan"));'
 ```
+
+Voice verification is manual and documented in the voice manual test guide (`docs/voice-input/MANUAL-TESTS.md`). For debugging, open `index.html?voicedebug` — this exposes `window.__voiceDebug`, a set of pure voice functions and redacted read-only state (never the retained audio Blob, transcript, or key).
 
 ---
 
@@ -228,5 +243,5 @@ These docs are the design spec. The code is the source of truth. If they disagre
 - **No build step.** The file you edit is the file the browser runs.
 - **Edit `database.js` for content.** Edit `index.html` for structure/logic/style. See §3.
 - **Keep `generatePrompt` pure.** No DOM access, no side effects. It takes state, returns a string.
-- **IIFE stays.** All JS lives inside the `(function () { "use strict"; ... })()` IIFE. No globals leak.
-- **Class hooks are the styling contract.** `.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, `#docsGroup`, `#mcpsGroup`, `#skillsGroup`, `#promptOutput`, `#stateDump`, `#copyBtn`, `#saveBtn`, `#openBtn`, `#templateWarning`, `#emptyHint`, `#phaseHint`. Don't rename without updating CSS.
+- **IIFE stays.** All JS lives inside the `(function () { "use strict"; ... })()` IIFE. No globals leak, with one documented exception: `window.__voiceDebug`, exposed only when the URL contains `?voicedebug`.
+- **Class hooks are the styling contract.** `.section`, `.row`, `.label`, `#taskGroup`, `#auditOptions`, `#phaseInputs`, `#docsGroup`, `#mcpsGroup`, `#skillsGroup`, `#promptOutput`, `#stateDump`, `#copyBtn`, `#saveBtn`, `#openBtn`, `#templateWarning`, `#emptyHint`, `#phaseHint`, `#micBtn`, `#voiceSettingsBtn`, `#voiceStatus`, `#voiceLevel`, `#voiceBanner`, `#voiceKeyDialog`, `.voice-filled`, and the `data-voice-status` / `data-voice-warn` body attributes. Don't rename without updating CSS.

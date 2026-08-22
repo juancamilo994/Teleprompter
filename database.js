@@ -154,7 +154,8 @@ const DATABASE = {
       "6. Do not include trailing periods in projectName, projectDescription, or sprintObjective. Do not add words the speaker did not say.",
       "7. totalPhases and currentPhase are integers. Only set phasedExecution to true if the speaker refers to phases, stages, or steps of a plan.",
       "8. Transcription errors are common with technical terms. \"next JS\", \"next js app\", \"nextjs\" all mean the Next.js option. Map obvious phonetic variants to the correct allowed value; if you are not confident, leave null and add the raw term to unmatched.",
-      "9. audit, docs, and mcps are objects, never null themselves — but every key inside them still follows rule 1 independently: set a key's value only if the speaker specifically named that exact document, MCP, or audit type; leave every other key in that same object null, even when one sibling key was just set. Naming one document or MCP is not evidence about the others. If the speaker said nothing at all about documents, MCPs, or audit types, return the object with every key null (for example docs: {hasReadme: null, agentsDoc: null, ...}) rather than docs: null itself."
+      "9. audit, docs, and mcps are objects, never null themselves — but every key inside them still follows rule 1 independently: set a key's value only if the speaker specifically named that exact document, MCP, or audit type; leave every other key in that same object null, even when one sibling key was just set. Naming one document or MCP is not evidence about the others. If the speaker said nothing at all about documents, MCPs, or audit types, return the object with every key null (for example docs: {hasReadme: null, agentsDoc: null, ...}) rather than docs: null itself.",
+      "10. unmatched is always an array, never null. If there is nothing unsupported to report, return an empty array []. Only add an entry per rule 4 or rule 8 above."
     ].join("\n"),
 
     // User-facing copy. {slots} are filled by index.html.
@@ -163,6 +164,12 @@ const DATABASE = {
       micRecording:       "Stop",
       statusRequesting:   "Waiting for microphone permission…",
       statusRecording:    "Listening — {seconds}s",
+      // Shown once elapsed time reaches limits.warnSeconds, replacing
+      // statusRecording. The amber color change alone (data-voice-warn) says
+      // nothing to a screen reader and asks a sighted user to do the
+      // 120-minus-N math themselves; a precise countdown matches the
+      // explicit-numbers style already used in noticeCapReached below.
+      statusRecordingWarn: "Listening — {seconds}s. Stopping in {remaining}s.",
       statusTranscribing: "Transcribing…",
       statusExtracting:   "Filling the form…",
       bannerUnmatched:    "Heard {terms}, which Teleprompter does not support. Those fields were left unchanged — dictate again or set them by hand.",
