@@ -485,6 +485,11 @@
       color: #92400E;
     }
     .hint[hidden] { display: none; }
+    /* Muted variant: states a rule, not a validation error, so it must not
+       borrow the amber warning colour. */
+    .hint.note { color: #6B7280; }
+    .row.disabled > label { opacity: 0.45; }
+    .row.disabled > input { opacity: 0.45; cursor: not-allowed; }
 
     /* Phase 6 — Empty-state placeholder */
     #emptyHint {
@@ -1075,10 +1080,12 @@
         <textarea id="sprintObjective" name="sprintObjective" rows="3"></textarea>
       </div>
 
-      <div class="row">
+      <div class="row" id="phasedRow">
         <label for="phasedExecution">Phased execution</label>
         <input type="checkbox" id="phasedExecution" name="phasedExecution" role="switch">
       </div>
+
+      <p class="hint note" id="phasedPlanNote" hidden>Plans are always phased — Teleprompter asks for one file per phase.</p>
 
       <div class="row" id="phaseInputs" hidden>
         <div class="row">
@@ -1152,6 +1159,8 @@
       const auditOptions = document.getElementById("auditOptions");
       const auditGroup = document.getElementById("auditGroup");
       const phaseInputs = document.getElementById("phaseInputs");
+      const phasedRow = document.getElementById("phasedRow");
+      const phasedPlanNote = document.getElementById("phasedPlanNote");
       const docsGroup = document.getElementById("docsGroup");
       const mcpsGroup = document.getElementById("mcpsGroup");
 
@@ -1392,9 +1401,19 @@
       // Centralized conditional-visibility logic. Used by selectTask, the
       // phasedExecution change handler, and applyState (template import).
       // Reads current DOM/selectedTask directly so callers don't need to pass state.
+      //
+      // Plan mode disables phased execution: a Teleprompter plan is always
+      // authored as phases, so "you'll execute only phase 2 of 5" is not a
+      // statement a planning prompt can make. The checkbox keeps whatever the
+      // user set — it is only inert while plan is selected — and getState()
+      // reports it as false for the duration (see §4).
       function refreshVisibility() {
+        const planning = selectedTask === "plan";
         auditOptions.hidden = selectedTask !== "audit";
-        phaseInputs.hidden = !form.elements.phasedExecution.checked;
+        phasedRow.classList.toggle("disabled", planning);
+        form.elements.phasedExecution.disabled = planning;
+        phasedPlanNote.hidden = !planning;
+        phaseInputs.hidden = planning || !form.elements.phasedExecution.checked;
       }
 
       function buildAuditGroup() {
@@ -1462,7 +1481,12 @@
       }
 
       function getState() {
-        const audit = { security: false, performance: false, misc: false };
+        // Shape follows DATABASE.auditTypes so a new audit type needs no edit
+        // here. Seeding the keys first also keeps the shape stable if a
+        // checkbox is ever missing from the DOM — the "is default state" check
+        // iterates Object.keys(state.audit) and would go ragged otherwise.
+        const audit = {};
+        for (const key of Object.keys(DATABASE.auditTypes)) audit[key] = false;
         for (const cb of auditGroup.querySelectorAll('input[type="checkbox"]')) {
           audit[cb.value] = cb.checked;
         }
@@ -1475,7 +1499,10 @@
           task: selectedTask,
           audit: audit,
           sprintObjective: form.elements.sprintObjective.value,
-          phasedExecution: form.elements.phasedExecution.checked,
+          // Plan mode always authors phases, so it never *executes* one:
+          // phased execution is reported off regardless of the checkbox, and
+          // every downstream consumer (prompt, export, isDefaultState) agrees.
+          phasedExecution: selectedTask !== "plan" && form.elements.phasedExecution.checked,
           totalPhases: numOrNull(form.elements.totalPhases.value),
           currentPhase: numOrNull(form.elements.currentPhase.value),
           phaseSpecPath: form.elements.phaseSpecPath.value
@@ -1492,6 +1519,16 @@
         }
         state.caveman = form.elements.caveman.checked;
         return state;
+      }
+
+      // Resolve a database prompt fragment that may vary by phased/solo mode.
+      // A plain string is mode-independent and returned as-is; a { phased, solo }
+      // pair yields the side matching the current mode, and a missing side means
+      // "no bullet in this mode" (the caller filters the empty result out).
+      function resolveModeLine(line, phased) {
+        if (typeof line === "string") return line;
+        if (!line || typeof line !== "object") return "";
+        return (phased ? line.phased : line.solo) || "";
       }
 
       // Join a list of doc phrases with Oxford-comma style: "a", "a and b", "a, b, and c".
@@ -1532,6 +1569,9 @@
       // trailing newline at end.
       function generatePrompt(state) {
         const sections = [];
+        // Single source of truth for every phase-conditional fragment below.
+        // getState() already forces this false in plan mode (see §4).
+        const phased = state.phasedExecution === true;
 
         // a. Role line. Empty name/desc drop their clauses instead of injecting
         // fabricated placeholders, so the agent asks the user rather than
@@ -1563,7 +1603,7 @@
         let sprintLine = objectiveRaw
           ? "The objective of this sprint is to: " + objectiveRaw
           : "The objective of this sprint is to be defined";
-        if (state.phasedExecution === true &&
+        if (phased &&
             Number.isInteger(state.currentPhase) && state.currentPhase > 0 &&
             Number.isInteger(state.totalPhases) && state.totalPhases > 0 &&
             state.currentPhase <= state.totalPhases) {
@@ -1577,7 +1617,7 @@
         for (const doc of DATABASE.baseDocs) {
           if (state[doc.id] === true) docs.push(doc.phrase);
         }
-        if (state.phasedExecution === true && state.phaseSpecPath && state.phaseSpecPath.trim()) {
+        if (phased && state.phaseSpecPath && state.phaseSpecPath.trim()) {
           docs.push(state.phaseSpecPath.trim());
         }
         const singleDoc = docs.length === 1;
@@ -1595,7 +1635,9 @@
         //   - 2+ docs    -> keep as-is
         const taskKey = state.task || "neutral";
         const approachLines = (DATABASE.blocks.executionApproach[taskKey] ||
-                               DATABASE.blocks.executionApproach.implement).slice();
+                               DATABASE.blocks.executionApproach.implement)
+          .map(function (line) { return resolveModeLine(line, phased); })
+          .filter(Boolean);
         if (docs.length === 0) {
           approachLines.shift();
         } else if (singleDoc) {
@@ -1606,12 +1648,22 @@
         if (projectTypeApproach) {
           approachLines.push(projectTypeApproach);
         }
-        // Failure protocol (all tasks) and verification report (implement/debug)
-        // are rendered as a bullet inside the Execution approach block, not as
-        // standalone sections.
-        approachLines.push(DATABASE.blocks.failureProtocol);
+        // Failure protocol (execution tasks only) and verification report
+        // (implement/debug) are rendered as bullets inside the Execution
+        // approach block, not as standalone sections.
+        //
+        // Plan and audit are excluded, both because the bullet would contradict
+        // the task it was attached to. Plan produces a document, not a run:
+        // there is no pre-check to fail yet. Audit is *defined* by encountering
+        // failures and reporting them "pass, fail, or incomplete" while being
+        // told "Do not fix or modify code" — a bullet that says to fix what it
+        // can and stop otherwise cancels both of those instructions.
+        if (state.task !== "plan" && state.task !== "audit") {
+          approachLines.push(DATABASE.blocks.failureProtocol);
+        }
         if (state.task === "implement" || state.task === "debug") {
-          approachLines.push(DATABASE.blocks.verificationReport);
+          const report = resolveModeLine(DATABASE.blocks.verificationReport, phased);
+          if (report) approachLines.push(report);
         }
         const approachBlock = ["Execution approach:"].concat(approachLines.map(function (l) { return "- " + l; }));
         sections.push(approachBlock.join("\n"));
@@ -1693,7 +1745,7 @@
 
       function updatePhaseHint() {
         const hint = document.getElementById("phaseHint");
-        if (!form.elements.phasedExecution.checked) {
+        if (selectedTask === "plan" || !form.elements.phasedExecution.checked) {
           hint.hidden = true;
           hint.textContent = "";
           return;
@@ -2711,7 +2763,7 @@
           return selectedTask ? taskGroup.querySelector('[data-task="' + selectedTask + '"]') : taskGroup;
         }
         if (key === "audit") {
-          return auditOptions; // all three checkboxes share name="audit"; highlight the group
+          return auditOptions; // all audit checkboxes share name="audit"; highlight the group
         }
         const mcp = DATABASE.mcps.find(function (m) { return mcpStateKey(m.id) === key; });
         if (mcp) return form.elements["mcp-" + mcp.id];

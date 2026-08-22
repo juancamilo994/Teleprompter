@@ -1,5 +1,5 @@
 const DATABASE = {
-  version: "1.4.0",
+  version: "1.7.0",
 
   // Dropdown options
   projectTypes: ["Next.js", "Swift", "React Native", "Web"],
@@ -63,6 +63,7 @@ const DATABASE = {
   auditTypes: {
     security:   { label: "Security",   key: "security" },
     performance:{ label: "Performance",key: "performance" },
+    privacy:    { label: "Privacy",    key: "privacy" },
     misc:       { label: "Misc",       key: "misc" }
   },
 
@@ -210,16 +211,32 @@ const DATABASE = {
     // appropriate verbs (create/update for implement, investigate for debug,
     // understand for plan, review for audit).
     // Each array item is rendered as a bullet ("- " prefix) in the prompt.
+    //
+    // An item is either a plain string (always rendered) or a { phased, solo }
+    // pair: `phased` is used when the sprint executes one phase of an existing
+    // plan, `solo` when it does not. Either side may be omitted to drop the
+    // bullet in that mode. Phase-spec wording must never reach a prompt that
+    // has no phase spec — a contradictory instruction is worse than a missing
+    // one, and it is the fastest way to confuse the agent about its scope.
     executionApproach: {
       neutral: [
         "Read all reference files listed above before starting anything.",
-        "Follow the phase spec exactly. Do not implement work from later phases unless the spec explicitly asks for a preparatory hook."
+        {
+          phased: "Follow the phase spec exactly. Do not implement work from later phases unless the spec explicitly asks for a preparatory hook.",
+          solo:   "Stay within the sprint objective above. Do not expand the scope on your own."
+        }
       ],
       implement: [
         "Read all reference files listed above before editing anything.",
-        "Create or update files exactly as the phase spec requests.",
+        {
+          phased: "Create or update files exactly as the phase spec requests.",
+          solo:   "Create or update files exactly as the sprint objective requests."
+        },
         "Run required tests. If a test cannot run in this environment, clearly state the manual validation steps and what evidence is needed.",
-        "Keep changes limited to this phase. Do not implement work from later phases unless the spec explicitly asks for a preparatory hook."
+        {
+          phased: "Keep changes limited to this phase. Do not implement work from later phases unless the spec explicitly asks for a preparatory hook.",
+          solo:   "Keep changes limited to the sprint objective. Do not implement work that was not asked for."
+        }
       ],
       debug: [
         "Read all reference files listed above before editing anything.",
@@ -229,9 +246,9 @@ const DATABASE = {
       ],
       plan: [
         "Read all reference files listed above before planning anything.",
-        "Understand the existing codebase structure, patterns, and conventions.",
+        "Analyze the existing codebase structure, patterns, and conventions.",
         "Plan context-independent phases that individual AI coding agents can execute in their own context window.",
-        "Ensure each phase has its own pre-checks and testing environment."
+        "Give each phase its own pre-checks and testing environment."
       ],
       audit: [
         "Read all reference files listed above before reviewing anything.",
@@ -241,13 +258,23 @@ const DATABASE = {
       ]
     },
 
-    // Fires for all tasks. Stops the agent from barreling through failures.
-    // Rendered as a bullet inside the Execution approach block.
-    failureProtocol: "If any pre-check, verification, or success criterion fails, stop and ask the user how to proceed. Do not proceed with assumptions.",
+    // Fires for the execution tasks only (neutral, implement, debug). Plan and
+    // audit are excluded — see generatePrompt in index.html for why the bullet
+    // contradicts both. Rendered as a bullet inside the Execution approach block.
+    //
+    // The point is NOT "halt on the first red test". An agent that stops at
+    // every failure is useless; an agent that silently picks one of several
+    // valid repairs is worse. The line draws that boundary: fix what is
+    // unambiguous, escalate what is a decision.
+    failureProtocol: "If a pre-check, verification, or success criterion fails, fix it when the fix is unambiguous and within scope. Stop and ask the user when you cannot fix it, or when two or more viable fixes would change the agreed approach — do not pick one by assumption.",
 
     // Fires for implement + debug. Explicit verification reporting.
     // Rendered as a bullet inside the Execution approach block.
-    verificationReport: "Share verification results explicitly: list each check from the phase spec, whether it passed or failed, and the evidence that supports it.",
+    // { phased, solo } pair — same rule as executionApproach items above.
+    verificationReport: {
+      phased: "Share verification results explicitly: list each check from the phase spec, whether it passed or failed, and the evidence that supports it.",
+      solo:   "Share verification results explicitly: list each check you ran, whether it passed or failed, and the evidence that supports it."
+    },
 
     planConsideration: "Consider you'll be developing a plan for an AI agent, so be very specific, clear, and pragmatic with your approach.",
     caveman: "Use caveman skill.",
@@ -274,29 +301,36 @@ const DATABASE = {
     "Swift": "For any testing on the iOS Simulator, use iPhone 17 Pro."
   },
 
-  // Task lists per task type
+  // Task lists per task type.
+  //
+  // Every item opens with an action verb the agent can actually perform and
+  // know it has finished — "Verify", "Read", "Identify", "Run", "Write". Avoid
+  // "Ensure X" and "Try to X": the first names a state rather than an act, and
+  // the second licenses giving up. Google's *Prompt Engineering* whitepaper
+  // (docs/, Boonstra, Feb 2025, p.55) puts it as "try using verbs that describe
+  // the action" and supplies the list these were chosen from.
   taskLists: {
     implement: [
-      "Ensure all pre-requisites are met",
+      "Verify every pre-requisite is met, and list any that are not",
       "Execute the plan as explained in the documentation",
       "Write a summary at the end with everything you modified, created or deleted, the performed tests, the outcomes, and any blockers or next steps"
     ],
     plan: [
-      "Ensure you understand the task and the context of the source code",
-      "Develop an implementation plan in context-independent phases, that individual AI coding agents can perform on its own context window",
-      "Ensure each phase has its own pre-checks and testing environments",
-      "Include a phase 0 with a README of the important consideration for each phase, including a short description of the job, clarity on the structure, etc.",
-      "Output the implementation plan on a new folder, containing independent .md files for each phase"
+      "Read the source code and state what you understand the task to be before planning",
+      "Develop an implementation plan in context-independent phases, each of which an individual AI coding agent can execute in its own context window",
+      "Give each phase its own pre-checks and testing environment",
+      "Write phase 0 as a single README.md holding the context every later phase needs: what the job is, how the plan is structured, and what each phase covers",
+      "Output the implementation plan into a new folder named after the plan objective, with one independent .md file per phase"
     ],
     debug: [
-      "Ensure you understand clearly the root cause of the issue",
-      "Propose the best solution to solve it",
-      "With the user's approval, execute the solution",
+      "Identify the root cause and explain the evidence that points to it",
+      "Propose the best fix, and explain what makes it better than the alternatives you considered",
+      "Apply the fix once the user approves it",
       "Test or let the user know how to test if the solution worked"
     ],
     audit: [
-      "Try to run each audit element test by yourself, let the user know if they need to do something",
-      "If one particular test is not successful, or there's no user input, mark it as incomplete",
+      "Run each audit check yourself, and tell the user which ones need their input",
+      "Mark a check incomplete when it cannot run or the user's input is missing",
       "Write the suggested solution to fix the elements that don't pass the audit"
     ]
   },
@@ -304,6 +338,10 @@ const DATABASE = {
   // Audit-type-specific guidance, per platform. Each list is 10–15 items,
   // ranked by importance (most important first).
   // Keyed: auditGuidance[projectType][auditType] = string[10–15].
+  // auditType is one of security / performance / privacy / misc (see auditTypes).
+  // privacy covers collection, consent, third-party disclosure, PII in logs/URLs,
+  // retention and deletion — security covers attacker-driven exposure. The split is
+  // deliberate; see docs/audit-checklist-1.6.0/README.md 0.3 before moving an item.
   // Rendered as a header + numbered list per checked audit type (see index.html generatePrompt).
   auditGuidance: {
     "Next.js": {
@@ -338,6 +376,23 @@ const DATABASE = {
         "Check route segments that don't need per-request data use static rendering/ISR instead of forcing dynamic = 'force-dynamic'.",
         "Verify edge runtime is used for latency-sensitive, lightweight routes and node runtime is reserved for routes needing Node APIs.",
         "Confirm third-party scripts are loaded with next/script and an appropriate strategy (lazyOnload/afterInteractive) instead of a raw <script> tag.",
+      ],
+      privacy: [
+        "Verify row-level security (Supabase RLS) or a per-user filter in the data access layer guards every table holding personal data, not just the UI route.",
+        "Confirm analytics, ad, and session-replay scripts mount only after explicit consent — a next/script or @next/third-parties tag renders on every request.",
+        "Verify PII never appears in route segments or searchParams; those URLs reach server logs, Referer headers, and analytics page-view events.",
+        "Check next.config.js headers() sets Referrer-Policy: strict-origin-when-cross-origin (or no-referrer) so full URLs don't leak to third-party origins.",
+        "Verify server logs, Route Handler console output, and error reporters redact request bodies, headers, and cookies before they leave the process.",
+        "Confirm user content sent to an LLM or other third-party API is minimized and redacted, and the provider's retention and training terms are disclosed.",
+        "Verify a real account-deletion path exists that removes database rows, uploaded objects, and vendor copies — not a flag that only hides the account.",
+        "Check the privacy policy matches the code: every analytics, payment, and support SDK actually present should appear in its list of third parties.",
+        "Verify user uploads live in private buckets served through signed, expiring URLs, not public object URLs with guessable sequential paths.",
+        "Confirm non-essential cookies (analytics, A/B, marketing) are set only after consent, and every cookie the app sets has a documented purpose and lifetime.",
+        "Verify personal data is not written to localStorage or sessionStorage, where any third-party script or browser extension on the page can read it.",
+        "Check retention limits exist for server logs, analytics events, and soft-deleted rows, instead of every record being kept indefinitely by default.",
+        "Verify IP and geo data available in middleware (x-forwarded-for, geo) is persisted only where a feature needs it, and truncated or hashed otherwise.",
+        "Confirm third-party embeds (maps, video, chat widgets) are click-to-load, and fonts are self-hosted via next/font rather than fetched from a CDN at runtime.",
+        "Verify preview and development environments are not seeded from production data, and that seed fixtures contain synthetic records only.",
       ],
       misc: [
         "Verify all interactive elements have visible focus styles and are reachable via keyboard (Tab/Shift+Tab) alone.",
@@ -383,6 +438,23 @@ const DATABASE = {
         "Verify animations avoid triggering layout thrash by animating transforms/opacity rather than properties that force AutoLayout or SwiftUI layout passes.",
         "Verify List/ScrollView content uses lazy containers (LazyVStack, List) rather than eagerly instantiating all rows, especially for long or dynamic collections.",
         "Verify Instruments Time Profiler / SwiftUI template shows no view body exceeding a few milliseconds on the main thread during scroll or interaction.",
+      ],
+      privacy: [
+        "Verify PrivacyInfo.xcprivacy declares NSPrivacyCollectedDataTypes and NSPrivacyAccessedAPITypes with a valid required-reason code for every flagged API used.",
+        "Confirm the App Store privacy nutrition label matches the manifest and the code's actual collection; Apple treats the manifest as the ground truth.",
+        "Verify each third-party SDK ships its own signed privacy manifest; an unmanifested SDK on Apple's list blocks submission and collects data you never declared.",
+        "Verify every NS*UsageDescription purpose string gives a specific, truthful reason rather than an Xcode placeholder or a generic 'to improve your experience'.",
+        "Verify permissions are requested at the point of use in their least-privileged form — whenInUse over always, PHPickerViewController over full library access.",
+        "Verify AppTrackingTransparency authorization is requested before any IDFA read, and NSPrivacyTracking and NSPrivacyTrackingDomains are declared in the manifest.",
+        "Confirm location defaults to reduced accuracy and requestTemporaryFullAccuracyAuthorization is called only where a feature truly needs precise coordinates.",
+        "Verify an in-app account deletion path exists per App Store Review Guideline 5.1.1(v), not a 'contact support' link, and that it actually reaches the server.",
+        "Confirm analytics and crash SDKs initialize only after any required consent, and that user properties and breadcrumbs carry no email, name, or account ID.",
+        "Verify personal data is logged with os_log's %{private} specifier or omitted; %{public} interpolation lands in device console output and sysdiagnose bundles.",
+        "Verify files holding personal data set FileProtectionType.complete so they stay encrypted while the device is locked, including Core Data stores and caches.",
+        "Confirm no persistent identifier beyond identifierForVendor is built, and the app doesn't fingerprint via device model, storage size, or sysctl attributes.",
+        "Verify the app never reads UIPasteboard.general on launch or foreground; use a paste control or detection patterns so the user consents to each paste.",
+        "Verify sign-out purges on-device personal data — search history, drafts, cached media, Core Data stores — not just the auth token in Keychain.",
+        "Confirm a data export path exists for subject access requests, and that deletion propagates to analytics and crash vendors, not only the app's own backend.",
       ],
       misc: [
         "Verify the app follows a coherent, consistently-applied architecture (MVVM/VIPER/etc.) rather than mixing patterns ad hoc across features.",
@@ -430,6 +502,23 @@ const DATABASE = {
         "Verify splash-to-first-paint time is measured and heavy synchronous work (large JSON parse, sync storage reads) is deferred off app startup.",
         "Verify list/screen benchmarking runs in release mode (`useBenchmark`/`useFlatListBenchmark`), not dev mode, since dev overhead skews results.",
       ],
+      privacy: [
+        "Verify AndroidManifest.xml ships only permissions the app uses; libraries inject READ_MEDIA_* and AD_ID, so strip unused ones via android.blockedPermissions.",
+        "Verify the Google Play Data Safety form matches what the code and its SDKs actually collect and share, and includes a working Delete Account URL.",
+        "Confirm ios.privacyManifests in app.json declares NSPrivacyAccessedAPITypes with reason codes, and that it agrees with the App Store privacy label.",
+        "Confirm expo-tracking-transparency requests ATT authorization before any IDFA or advertising ID read, with a userTrackingPermission naming the real purpose.",
+        "Confirm analytics and crash SDKs are initialized after consent where consent is required, rather than at module import in the app entry file.",
+        "Verify Android media flows use the system photo picker so the app never holds broad gallery access; broad READ_MEDIA_* now needs a policy declaration.",
+        "Verify permissions are requested at the point of use behind an in-app explanation, not all at launch where the OS prompt arrives with no context.",
+        "Verify sign-out clears locally cached personal data — AsyncStorage, MMKV, redux-persist, image caches — not only the stored auth token.",
+        "Verify push notification payloads and deep-link parameters carry no PII; both traverse Apple and Google infrastructure and land in OS logs in cleartext.",
+        "Verify location uses foreground-only permission unless a background use case is declared and justified in both stores' review forms.",
+        "Verify user uploads go to private storage with signed URLs, and that media URLs embedded in the app are not enumerable by incrementing a path segment.",
+        "Confirm no cross-install fingerprint is built from expo-device or react-native-device-info attributes to re-identify users who reinstalled or opted out.",
+        "Verify screens showing personal data set FLAG_SECURE on Android and a redacted overlay on iOS, so screenshots and app-switcher snapshots don't expose them.",
+        "Verify an account and data deletion flow exists in-app and on the web, and that deletion propagates to analytics and crash vendors, not just the backend.",
+        "Confirm the privacy policy URL in app.json and both store listings resolves, and that it lists every SDK that receives user data.",
+      ],
       misc: [
         "Verify folder structure separates navigation, screens, components, and services coherently, and the navigation graph has no orphaned routes.",
         "Verify every `TouchableOpacity`/`Pressable`/`Touchable*` element has a valid `accessibilityRole` and a descriptive `accessibilityLabel`.",
@@ -475,6 +564,23 @@ const DATABASE = {
         "Check layout-triggering properties (offsetHeight, getBoundingClientRect) aren't read and written in the same loop, causing forced synchronous layout thrash.",
         "Verify large JS bundles are code-split by route/feature and non-critical modules are dynamically imported rather than loaded eagerly.",
         "Confirm static assets (JS, CSS, images, fonts) are served with long-lived cache-control headers and content-hashed filenames.",
+      ],
+      privacy: [
+        "Verify no analytics, ad, or session-replay script runs before consent; a <script> in <head> fires on parse regardless of a banner rendered later by JS.",
+        "Confirm the consent banner offers Reject All at the same click depth as Accept All, uses no pre-ticked boxes, and stores the choice with a timestamp.",
+        "Verify session-replay and heatmap tools mask inputs by default (data-hj-suppress, fs-mask) so passwords, card numbers, and free text are never recorded.",
+        "Verify PII never appears in query strings or fragments; those URLs reach analytics page views, Referer headers, browser history, and server access logs.",
+        "Confirm Referrer-Policy is set to strict-origin-when-cross-origin or no-referrer via header or meta tag so full URLs don't leak to third-party origins.",
+        "Confirm third-party embeds — video, maps, fonts, chat widgets — are click-to-load or self-hosted; they set cookies and log the visitor's IP on page load.",
+        "Check the cookie inventory matches the cookie policy: name, purpose, duration, and first- or third-party status documented for every cookie actually set.",
+        "Verify a Permissions-Policy header restricts geolocation, camera, microphone, and payment so embedded third-party frames cannot request them on your origin.",
+        "Verify the site honours Global Privacy Control (Sec-GPC header, navigator.globalPrivacyControl) by suppressing sale or sharing of that visitor's data.",
+        "Verify Clear-Site-Data is returned on logout so cached personal data, storage, and service workers are removed, which matters most on shared devices.",
+        "Verify tag-manager and marketing scripts don't capture partial form input on keystroke or blur events before the user has chosen to submit anything.",
+        "Verify geolocation, camera, microphone, and notification prompts fire on a user gesture at the point of use, with an in-page explanation shown first.",
+        "Verify error and telemetry payloads exclude form values, cookies, and full URLs, since a crash reporter is a third party receiving whatever you hand it.",
+        "Confirm no fingerprinting surface — canvas readback, AudioContext, font enumeration, navigator probing — is used to re-identify visitors without consent.",
+        "Confirm a documented retention period exists for server logs, analytics, and form submissions, and a reachable route for access and deletion requests.",
       ],
       misc: [
         "Verify the page uses semantic landmarks (header, nav, main, footer) and a single logical heading order (h1 then nested h2/h3) rather than div soup.",

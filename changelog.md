@@ -37,6 +37,55 @@ All notable changes to Teleprompter are logged here, newest first. Use this file
 
 ---
 
+## 2026-08-22 — Action verbs in task lists (db 1.7.0)
+
+### Changed
+- **Every task-list item now opens with a verb the agent can perform and know it has finished.** Four opened with "Ensure", which names a state rather than an act, and one with "Try to", which licenses giving up; two more opened with a preposition or a conditional. `Ensure all pre-requisites are met` → `Verify every pre-requisite is met, and list any that are not`; `Ensure you understand the task…` → `Read the source code and state what you understand the task to be before planning`; `Ensure you understand clearly the root cause` → `Identify the root cause and explain the evidence that points to it`; `With the user's approval, execute the solution` → `Apply the fix once the user approves it`; `Try to run each audit element test by yourself…` → `Run each audit check yourself, and tell the user which ones need their input`; `If one particular test is not successful…` → `Mark a check incomplete when it cannot run or the user's input is missing`. Source: Google's *Prompt Engineering* whitepaper (`docs/Google Prompt Engineering.pdf`, Boonstra, Feb 2025, p.55) — "try using verbs that describe the action". The audit checklists were already clean (213 items, all Verify/Confirm/Check).
+- **Same fix in the plan execution approach**, so the approach block and the task list agree: `Understand the existing codebase…` → `Analyze the existing codebase…`, and `Ensure each phase has its own pre-checks…` → `Give each phase its own pre-checks…`.
+- **Debug now asks for the reasoning, not just the fix.** `Propose the best solution to solve it` → `Propose the best fix, and explain what makes it better than the alternatives you considered`, following the whitepaper's debugging prompt (p.50), which asks the model to debug *and* explain how the code can be improved.
+
+### Fixed
+- Plan task 2 had a number disagreement — "individual AI coding agent**s** can perform on **its** own context window". Now "each of which an individual AI coding agent can execute in its own context window".
+
+---
+
+## 2026-08-22 — Privacy audit category (db 1.6.0)
+
+### Added
+
+- **A fourth audit type: Privacy.** `DATABASE.auditTypes` gains `privacy`, inserted between `performance` and `misc` (key order drives both checkbox order and prompt section order). `DATABASE.auditGuidance` grows from 12 lists to 16 — a new 15-item privacy list for each of Next.js, Swift, React Native, and Web. Researched from platform primary sources (Apple privacy-manifest and required-reason API docs, App Store Review Guideline 5.1.1(v), Google Play Data Safety and account-deletion policy, Expo `ios.privacyManifests` / `android.blockedPermissions`, W3C GPC, MDN on `Referrer-Policy` / `Permissions-Policy` / `Clear-Site-Data`), plus GDPR Arts. 5/7/17 and empirical scans of AI-generated apps. Provenance in `docs/audit-checklist-1.6.0/research/*.json` (local artifacts; `docs/*` is git-ignored).
+- No UI, rendering, or template code was needed to surface it: `buildAuditGroup()`, the `generatePrompt()` audit block, the voice extraction schema, `validatePatch()`, and the patch applier all derive their key set from `DATABASE.auditTypes` at runtime. The fourth checkbox, the fourth prompt section, and "audit this for privacy" dictation all work off the database entry alone.
+
+### Changed
+
+- **`security` and `privacy` are scoped against each other, deliberately.** `security` covers attacker-driven exposure; `privacy` covers collection, consent, third-party disclosure, PII in logs/URLs/deep links, retention, and deletion. 16 candidate privacy items were rejected or reframed during research to avoid restating a `security` item — e.g. React Native `security` keeps crash-reporter *scrubbing*, so `privacy` took *consent-gating and init ordering* of the same SDKs and says nothing about scrubbing. The rule and the full adjacency table live in `docs/audit-checklist-1.6.0/README.md` §0.3 and `research/misc-dedupe.md` §4; `AGENTS.md` §3 points at them.
+- **`getState()` derives the audit state shape from `DATABASE.auditTypes`** instead of a hardcoded `{ security, performance, misc }` literal. The canonical shape is now four booleans. Beyond supporting the new key, this keeps `state.audit` from going ragged if a checkbox is ever absent from the DOM — the "is default state" check iterates `Object.keys(state.audit)`.
+- **`DATABASE.version` bumped `1.5.0` → `1.6.0`.** Audit prompt output changes for any audit task with Privacy checked. Templates exported at an earlier `dbVersion` still import: their `audit` object has no `privacy` key, so `setChecked()` leaves the Privacy checkbox at its current value — the documented forward-compatibility rule (§1.4: *missing keys leave current values untouched*), not a special case. No migration code needed. Note the consequence: an old template does not *clear* a Privacy box the user had already ticked, same as for any other key it omits.
+
+### Not changed (a reviewed result, not an omission)
+
+- **`misc` is untouched. Zero items removed.** The sprint's second job was to check whether any new privacy item duplicated something already in `misc`. All 48 `misc` items across the four platforms were given an explicit verdict: 48 of 48 are `not-privacy`. The reason is structural — the 1.3.0 sprint defined `misc` as "code clarity, dead code, error handling coverage, test coverage, accessibility, naming, project structure, lint/format discipline," a bucket that never included privacy. Where the two touch the same code they ask opposite questions: `misc` wants `console.log` stripped (build hygiene) while `privacy` governs what a legitimate log line contains; `misc` wants `window.onerror` wired so errors are captured at all while `privacy` narrows what the captured payload carries. Full verdict tables in `docs/audit-checklist-1.6.0/research/misc-dedupe.md`. The real duplication risk was with `security`, and it was handled during research rather than by deletion.
+
+### Added (docs)
+
+- Implementation plan: `docs/audit-checklist-1.6.0/` (README + 9 phase files + `research/` outputs), replicating the `docs/audit-checklist-1.3.0/` methodology with an added dedupe phase.
+
+---
+
+## 2026-08-22 — Phase-aware prompt fragments (db 1.5.0)
+
+### Changed
+- **Phase language is now conditional.** Execution-approach bullets that referenced "the phase spec" or "this phase" were emitted even when Phased execution was off, telling the agent to obey a document that did not exist. Database items may now be a `{ phased, solo }` pair, and `generatePrompt()` resolves the side matching the sprint. Affected: the neutral and implement approach bullets, and `verificationReport` ("each check from the phase spec" → "each check you ran" when unphased).
+- **Plan mode disables Phased execution.** A Teleprompter plan is always authored as phases, so "you'll execute only phase 2 of 5" is not a statement a planning prompt can make. Selecting Plan greys out the toggle, hides the phase inputs, and shows a note; the checkbox keeps the user's value for when they switch back, and `getState()` reports `phasedExecution: false` for the duration.
+- **Failure protocol is scoped to execution tasks** (neutral, implement, debug). It was firing on all five. Plan has nothing to execute yet, and in audit it directly cancelled the two bullets above it — "Do not fix or modify code" and "Report findings per check: pass, fail, or incomplete."
+- **Failure protocol rewritten.** It read as "halt on the first failure." It now draws the real boundary: fix what is unambiguous and in scope, escalate what is a decision — "Stop and ask the user when you cannot fix it, or when two or more viable fixes would change the agreed approach."
+- **Plan task list, items 4 and 5.** Item 4 read as two deliverables (a phase 0 *and* a README); it now names one file. Item 5 said "a new folder" without saying which; it now says "a new folder named after the plan objective, with one independent .md file per phase."
+
+### Fixed
+- Unphased implement prompts no longer contain the phrase "phase spec" anywhere.
+
+---
+
 ## 2026-07-10 — Prompt polish (grammar + formatting)
 
 ### Fixed
