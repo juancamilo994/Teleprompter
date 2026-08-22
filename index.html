@@ -22,6 +22,7 @@
     /* Header */
     header {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 16px;
       padding: 8px 40px;
@@ -34,14 +35,23 @@
     }
     header #actionBar {
       display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
       gap: 8px;
       margin-left: auto;
     }
+    /* nowrap + no shrink: as the header narrows, buttons used to compress
+       horizontally and wrap their own label text ("Open" / "template" on two
+       lines) before the phone breakpoint kicked in. Letting the row itself
+       wrap (above) instead of the buttons shrink keeps every button at full,
+       readable size — it just drops to a second line sooner. */
     header #actionBar button {
       padding: 8px 16px;
       font-size: 13px;
       font-family: inherit;
       font-weight: 500;
+      white-space: nowrap;
+      flex-shrink: 0;
       border: 1px solid rgba(255,255,255,0.2);
       background-color: transparent;
       color: #FFFFFF;
@@ -902,7 +912,6 @@
     /* Phase 6 — Narrow viewport fallback */
     @media (max-width: 720px) {
       header {
-        flex-wrap: wrap;
         flex-direction: column;
         align-items: center;
         padding: 16px 20px;
@@ -911,7 +920,6 @@
       header #actionBar {
         margin-left: 0;
         justify-content: center;
-        flex-wrap: wrap;
       }
       #dualContainer {
         flex-direction: column;
@@ -2442,9 +2450,13 @@
             // straightforward extraction task, not one that benefits from
             // heavy reasoning, so effort is capped low; max_completion_tokens
             // is set generously above what a full schema response needs so a
-            // full JSON body always fits regardless.
+            // full JSON body always fits regardless. 2048 still let the
+            // reasoning phase eat the whole budget often enough to be a live
+            // user complaint, so it's raised further here (owner-reported,
+            // 2026-08-21) rather than pursuing effort tuning that no longer
+            // has headroom below "low".
             reasoning_effort: "low",
-            max_completion_tokens: 2048,
+            max_completion_tokens: 4096,
             messages: [
               { role: "system", content: v.extractionSystemPrompt },
               { role: "user", content: buildUserMessage(transcript, currentState) }
@@ -2616,6 +2628,16 @@
           if (patch.audit && patch.audit[k] !== null && patch.audit[k] !== undefined) auditDelta[k] = patch.audit[k];
         }
         if (Object.keys(auditDelta).length) delta.audit = auditDelta;
+        // Enabling an audit sub-type only means anything with task === "audit"
+        // (auditOptions is hidden otherwise, see refreshVisibility). The model
+        // sometimes returns an audit flag without also returning task: "audit"
+        // in the same utterance (observed: "do an audit on performance" set
+        // audit.performance but left task null) — the checkbox then flips on
+        // behind a hidden row with no visible sign anything happened. Force
+        // the invariant here rather than trust the model to always pair them.
+        if (Object.keys(auditDelta).some(function (k) { return auditDelta[k] === true; })) {
+          delta.task = "audit";
+        }
 
         for (const doc of DATABASE.baseDocs) {
           if (patch.docs && patch.docs[doc.id] !== null && patch.docs[doc.id] !== undefined) put(doc.id, patch.docs[doc.id]);
